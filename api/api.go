@@ -358,13 +358,15 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 		// tips: api接口返回数据是明文
 		decryptData = response.Body()
 	case CryptoModeEAPI:
-		// TODO: 貌似eapi接口返回数据是否是是明文,跟传入参数e_r: true有关,true为加密，false为明文。此处考虑采用反射req中得字段处理。
-		// see: https://gitlab.com/Binaryify/neteasecloudmusicapi/-/commit/58e9865b70e41197c2ab75c46a775fc45d6efa6e
-		// decryptData, err = crypto.EApiDecrypt(string(response.Body()), "")
-		// if err != nil {
-		// 	return nil, fmt.Errorf("EApiDecrypt: %w", err)
-		// }
 		decryptData = response.Body()
+		if len(decryptData) > 0 && decryptData[0] != '{' {
+			decrypted, err := crypto.EApiDecrypt(string(decryptData), "")
+			if err == nil {
+				decryptData = decrypted
+			} else {
+				log.Warn("EApiDecrypt failed: %s", err)
+			}
+		}
 		log.Debug("[response.decrypt]: %s", string(decryptData))
 	case CryptoModeWEAPI:
 		// tips: weapi接口返回数据是明文

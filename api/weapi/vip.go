@@ -1276,7 +1276,7 @@ type VipTaskSignResp struct {
 // needLogin: 未知
 func (a *Api) VipTaskSign(ctx context.Context, req *VipTaskSignReq) (*VipTaskSignResp, error) {
 	var (
-		url   = "https://interface3.music.163.com/weapi/vip-center-bff/task/sign"
+		url   = "https://music.163.com/weapi/vip-center-bff/task/sign"
 		reply VipTaskSignResp
 		opts  = api.NewOptions()
 	)

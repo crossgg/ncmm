@@ -90,6 +90,8 @@ type MusicianVipConf struct {
 
 // MusicianVipNoteConf 笔记发布任务配置
 type MusicianVipNoteConf struct {
+	Titles       []string `json:"titles" yaml:"titles"`
+	TitlesFile   string   `json:"titlesFile" yaml:"titlesFile"`
 	Messages     []string `json:"messages" yaml:"messages"`
 	MessagesFile string   `json:"messagesFile" yaml:"messagesFile"`
 	ImageURLs    []string `json:"imageUrls" yaml:"imageUrls"`
@@ -186,6 +188,9 @@ func (c *Config) ReplaceMagicVariables(name, value string) (*Config, bool) {
 	}
 	if c.MusicianVip != nil && c.MusicianVip.Note.MessagesFile != "" {
 		c.MusicianVip.Note.MessagesFile = os.Expand(c.MusicianVip.Note.MessagesFile, mapping)
+	}
+	if c.MusicianVip != nil && c.MusicianVip.Note.TitlesFile != "" {
+		c.MusicianVip.Note.TitlesFile = os.Expand(c.MusicianVip.Note.TitlesFile, mapping)
 	}
 	return c, isset
 }

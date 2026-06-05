@@ -20,10 +20,10 @@ type MusicianSignResp struct {
 }
 
 // MusicianSign 音乐人签到（完成"登录音乐人中心"任务）
-// url: /api/creator/user/access
+// url: /weapi/creator/user/access
 func (a *Api) MusicianSign(ctx context.Context, req *MusicianSignReq) (*MusicianSignResp, error) {
 	var (
-		url   = "https://music.163.com/api/creator/user/access"
+		url   = "https://music.163.com/weapi/creator/user/access"
 		reply MusicianSignResp
 		opts  = api.NewOptions()
 	)
@@ -66,12 +66,37 @@ type MusicianTask struct {
 	UpdateTime      int64  `json:"updateTime"`
 }
 
-// MusicianTasks 获取音乐人任务列表
-// url: /api/nmusician/workbench/mission/cycle/list
+// MusicianTasks 获取音乐人周期任务列表
+// url: /weapi/nmusician/workbench/mission/cycle/list
 func (a *Api) MusicianTasks(ctx context.Context, req *MusicianTasksReq) (*MusicianTasksResp, error) {
 	var (
-		url   = "https://music.163.com/api/nmusician/workbench/mission/cycle/list"
+		url   = "https://music.163.com/weapi/nmusician/workbench/mission/cycle/list"
 		reply MusicianTasksResp
+		opts  = api.NewOptions()
+	)
+
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
+
+// MusicianTasksNewReq 获取音乐人阶段任务列表请求
+type MusicianTasksNewReq struct{}
+
+// MusicianTasksNewResp 获取音乐人阶段任务列表响应
+type MusicianTasksNewResp struct {
+	types.RespCommon[MusicianTasksRespData]
+}
+
+// MusicianTasksNew 获取音乐人阶段任务列表
+// url: /weapi/nmusician/workbench/mission/stage/list
+func (a *Api) MusicianTasksNew(ctx context.Context, req *MusicianTasksNewReq) (*MusicianTasksNewResp, error) {
+	var (
+		url   = "https://music.163.com/weapi/nmusician/workbench/mission/stage/list"
+		reply MusicianTasksNewResp
 		opts  = api.NewOptions()
 	)
 
@@ -85,8 +110,8 @@ func (a *Api) MusicianTasks(ctx context.Context, req *MusicianTasksReq) (*Musici
 
 // MusicianCloudbeanObtainReq 领取云豆请求
 type MusicianCloudbeanObtainReq struct {
-	Id     string `json:"id"`     // 任务 id (userMissionId)
-	Period string `json:"period"` // 任务周期
+	UserMissionId string `json:"userMissionId"` // 任务 id (userMissionId)
+	Period        string `json:"period"`        // 任务周期
 }
 
 // MusicianCloudbeanObtainResp 领取云豆响应
@@ -95,17 +120,17 @@ type MusicianCloudbeanObtainResp struct {
 }
 
 // MusicianCloudbeanObtain 领取音乐人云豆奖励
-// url: /api/nmusician/workbench/mission/reward/obtain/new
+// url: /weapi/nmusician/workbench/mission/reward/obtain/new
 func (a *Api) MusicianCloudbeanObtain(ctx context.Context, req *MusicianCloudbeanObtainReq) (*MusicianCloudbeanObtainResp, error) {
-	if req.Id == "" {
-		return nil, fmt.Errorf("id is required")
+	if req.UserMissionId == "" {
+		return nil, fmt.Errorf("userMissionId is required")
 	}
 	if req.Period == "" {
 		return nil, fmt.Errorf("period is required")
 	}
 
 	var (
-		url   = "https://music.163.com/api/nmusician/workbench/mission/reward/obtain/new"
+		url   = "https://music.163.com/weapi/nmusician/workbench/mission/reward/obtain/new"
 		reply MusicianCloudbeanObtainResp
 		opts  = api.NewOptions()
 	)

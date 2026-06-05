@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/3899/ncmm/api"
@@ -25,6 +26,8 @@ import (
 
 // EventPublishReq 发送动态请求
 type EventPublishReq struct {
+	// Title 动态标题 (新版图文笔记支持标题)
+	Title string `json:"title,omitempty"`
 	// Msg 动态文本内容
 	Msg string `json:"msg"`
 	// Type 动态类型, 发纯文本用 "noresource"
@@ -33,8 +36,12 @@ type EventPublishReq struct {
 	Uuid string `json:"uuid"`
 	// Pics 图片信息JSON字符串, 由 EventUploadImage 生成; 无图片时留空
 	Pics string `json:"pics,omitempty"`
-	// AddComment 是否添加评论, 默认 "false"
-	AddComment string `json:"addComment,omitempty"`
+	// AddComment 是否添加评论, 默认 false
+	AddComment bool `json:"addComment"`
+	// PrivacySetting 隐私设置
+	PrivacySetting string `json:"privacySetting,omitempty"`
+	// SocialSpaceVisible 是否可见空间 默认 1
+	SocialSpaceVisible int `json:"socialSpaceVisible,omitempty"`
 }
 
 // EventPublishResp 发送动态响应
@@ -48,27 +55,6 @@ type EventPublishResp struct {
 		Json         string `json:"json"`
 		Uuid         string `json:"uuid"`
 		EventTime    int64  `json:"eventTime"`
-		ActId        int64  `json:"actId"`
-		ThreadId     string `json:"threadId"`
-		Id           int64  `json:"id"`
-		Type         int    `json:"type"`
-		TopEvent     bool   `json:"topEvent"`
-		Pics         []struct {
-			OriginUrl    string `json:"originUrl"`
-			SquareUrl    string `json:"squareUrl"`
-			RectangleUrl string `json:"rectangleUrl"`
-			Format       string `json:"format"`
-			Width        int    `json:"width"`
-			Height       int    `json:"height"`
-		} `json:"pics"`
-		Info struct {
-			CommentThread struct {
-				Id           string `json:"id"`
-				CommentCount int    `json:"commentCount"`
-				LikedCount   int    `json:"likedCount"`
-				ShareCount   int    `json:"shareCount"`
-			} `json:"commentThread"`
-		} `json:"info"`
 	} `json:"event"`
 }
 
@@ -85,15 +71,18 @@ func (a *Api) EventPublish(ctx context.Context, req *EventPublishReq) (*EventPub
 		}
 		req.Uuid = hex.EncodeToString(b)
 	}
-	if req.AddComment == "" {
-		req.AddComment = "false"
-	}
 	if req.Type == "" {
 		req.Type = "noresource"
 	}
+	if req.PrivacySetting == "" {
+		req.PrivacySetting = "0"
+	}
+	if req.SocialSpaceVisible == 0 {
+		req.SocialSpaceVisible = 1
+	}
 
 	var (
-		url   = "https://music.163.com/eapi/share/friends/resource"
+		url   = "https://interface3.music.163.com/eapi/note/share/friends/resource"
 		reply EventPublishResp
 		opts  = api.NewOptions()
 	)
@@ -126,7 +115,7 @@ type EventDeleteResp struct {
 // 需要登录
 func (a *Api) EventDelete(ctx context.Context, req *EventDeleteReq) (*EventDeleteResp, error) {
 	var (
-		url   = "https://music.163.com/eapi/event/delete"
+		url   = "https://interface3.music.163.com/eapi/event/delete"
 		reply EventDeleteResp
 		opts  = api.NewOptions()
 	)
@@ -144,12 +133,15 @@ func (a *Api) EventDelete(ctx context.Context, req *EventDeleteReq) (*EventDelet
 
 // eventImgPicInfo 事件图片信息 (用于动态图片参数)
 type eventImgPicInfo struct {
-	OriginId    int    `json:"originId"`
-	SquareId    int    `json:"squareId"`
-	RectangleId int    `json:"rectangleId"`
-	Format      string `json:"format"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
+	OriginId      string `json:"originId"`
+	SquareId      string `json:"squareId"`
+	RectangleId   string `json:"rectangleId"`
+	PcSquareId    string `json:"pcSquareId"`
+	PcRectangleId string `json:"pcRectangleId"`
+	OriginJpgId   string `json:"originJpgId"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	Index         int    `json:"index"`
 }
 
 // eventNosTokenResp Nos Token 分配响应
@@ -168,9 +160,9 @@ type eventUploadImgResp struct {
 	types.RespCommon[any]
 	PicSubtype string `json:"picSubtype"`
 	PicInfo    struct {
-		OriginId    int    `json:"originId"`
-		SquareId    int    `json:"squareId"`
-		RectangleId int    `json:"rectangleId"`
+		OriginId    int64  `json:"originId"`
+		SquareId    int64  `json:"squareId"`
+		RectangleId int64  `json:"rectangleId"`
 		Format      string `json:"format"`
 		Width       int    `json:"width"`
 		Height      int    `json:"height"`
@@ -276,13 +268,20 @@ func (a *Api) EventUploadImage(ctx context.Context, filePath string) (string, er
 	}
 
 	// 构建 pics JSON
+	originIdStr := strconv.FormatInt(imgReply.PicInfo.OriginId, 10)
+	squareIdStr := strconv.FormatInt(imgReply.PicInfo.SquareId, 10)
+	rectangleIdStr := strconv.FormatInt(imgReply.PicInfo.RectangleId, 10)
+
 	picInfo := eventImgPicInfo{
-		OriginId:    imgReply.PicInfo.OriginId,
-		SquareId:    imgReply.PicInfo.SquareId,
-		RectangleId: imgReply.PicInfo.RectangleId,
-		Format:      imgReply.PicInfo.Format,
-		Width:       imgReply.PicInfo.Width,
-		Height:      imgReply.PicInfo.Height,
+		OriginId:      originIdStr,
+		SquareId:      squareIdStr,
+		RectangleId:   rectangleIdStr,
+		PcSquareId:    squareIdStr,
+		PcRectangleId: rectangleIdStr,
+		OriginJpgId:   originIdStr,
+		Width:         imgReply.PicInfo.Width,
+		Height:        imgReply.PicInfo.Height,
+		Index:         0,
 	}
 	picsBytes, err := json.Marshal([]eventImgPicInfo{picInfo})
 	if err != nil {
@@ -384,13 +383,20 @@ func (a *Api) EventUploadImages(ctx context.Context, filePaths []string) (string
 			return "", fmt.Errorf("get event img info failed for %s: code=%d", fp, imgReply.Code)
 		}
 
+		originIdStr := strconv.FormatInt(imgReply.PicInfo.OriginId, 10)
+		squareIdStr := strconv.FormatInt(imgReply.PicInfo.SquareId, 10)
+		rectangleIdStr := strconv.FormatInt(imgReply.PicInfo.RectangleId, 10)
+
 		pics = append(pics, eventImgPicInfo{
-			OriginId:    imgReply.PicInfo.OriginId,
-			SquareId:    imgReply.PicInfo.SquareId,
-			RectangleId: imgReply.PicInfo.RectangleId,
-			Format:      imgReply.PicInfo.Format,
-			Width:       imgReply.PicInfo.Width,
-			Height:      imgReply.PicInfo.Height,
+			OriginId:      originIdStr,
+			SquareId:      squareIdStr,
+			RectangleId:   rectangleIdStr,
+			PcSquareId:    squareIdStr,
+			PcRectangleId: rectangleIdStr,
+			OriginJpgId:   originIdStr,
+			Width:         imgReply.PicInfo.Width,
+			Height:        imgReply.PicInfo.Height,
+			Index:         len(pics),
 		})
 	}
 

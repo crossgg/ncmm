@@ -105,7 +105,15 @@ mixPlay:
 musicianVip:
   # 笔记发布任务配置
   note:
-    # 笔记文字内容。每次发布时会从中随机选择一条发布（若有 messagesFile 则会进行并集合并）
+    # 笔记标题列表。每次发布图文笔记时会从中随机选择一个作为标题（若有 titlesFile 则会进行并集合并）
+    titles:
+      - "今日音乐分享"
+      - "音乐人的日常"
+      - "分享好听的歌"
+      - "每日歌单推荐"
+    # 动态发布标题列表文件路径 (支持本地路径与远程 http/https 链接，会与 titles 并集合并)
+    titlesFile: "https://tinyurl.com/4pjvv5j7"
+    # 笔记文字内容。每次发布时会从中随机选择一条作为正文（若有 messagesFile 则会进行并集合并）
     messages:
       - "分享一首好听的歌~"
       - "音乐是最好的陪伴"

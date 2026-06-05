@@ -277,17 +277,25 @@ func (c *loginCookieCmd) execute(ctx context.Context, args []string) error {
 	if c.Output != "" {
 		outputPath := c.Output
 		if !filepath.IsAbs(outputPath) {
-			// 获取指定的 home 目录进行拼接
-			home := c.root.root.Opts.Home
-			if home == "" {
-				home = config.HomeDir
+			// 获取配置中解析好的默认 cookie 文件夹路径
+			var defaultDir string
+			if c.root.root.Cfg != nil && c.root.root.Cfg.Network != nil && c.root.root.Cfg.Network.Cookie.Filepath != "" {
+				defaultDir = filepath.Dir(c.root.root.Cfg.Network.Cookie.Filepath)
 			}
-			home = filepath.Clean(home)
-			// 如果没有传特定的工作目录（即使用默认的用户家目录），则收归在隐藏的 .ncmm 文件夹内保存
-			if home == filepath.Clean(config.HomeDir) {
-				home = filepath.Join(home, ".ncmm")
+			if defaultDir == "" {
+				// 获取指定的 home 目录进行拼接
+				home := c.root.root.Opts.Home
+				if home == "" {
+					home = config.HomeDir
+				}
+				home = filepath.Clean(home)
+				// 如果没有传特定的工作目录（即使用默认的用户家目录），则收归在隐藏的 .ncmm 文件夹内保存
+				if home == filepath.Clean(config.HomeDir) {
+					home = filepath.Join(home, ".ncmm")
+				}
+				defaultDir = home
 			}
-			outputPath = filepath.Join(home, outputPath)
+			outputPath = filepath.Join(defaultDir, outputPath)
 		}
 		// 复制配置，修改 cookie filepath 指向指定文件
 		networkCfgCopy := *networkCfg

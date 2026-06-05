@@ -137,22 +137,39 @@ func (c *SignIn) runSignForCookie(ctx context.Context, cookieFile string, isPrim
 	}
 
 	// 获取音乐人任务列表并领取云豆
-	tasks, err := request.MusicianTasks(ctx, &weapi.MusicianTasksReq{})
+	var allTasks []weapi.MusicianTask
+
+	// 1. 获取音乐人周期任务列表
+	cycleTasks, err := request.MusicianTasks(ctx, &weapi.MusicianTasksReq{})
 	if err != nil {
-		c.cmd.Printf("  获取任务失败: %s\n", err)
-	} else if tasks.Code != 200 {
-		c.cmd.Printf("  获取任务提示: code=%d msg=%s\n", tasks.Code, tasks.Message)
-	} else if len(tasks.Data.TaskList) == 0 {
-		c.cmd.Println("  暂无音乐人进阶任务")
+		c.cmd.Printf("  获取音乐人周期任务失败: %s\n", err)
+	} else if cycleTasks.Code == 200 {
+		allTasks = append(allTasks, cycleTasks.Data.TaskList...)
+	} else {
+		c.cmd.Printf("  获取音乐人周期任务提示: code=%d msg=%s\n", cycleTasks.Code, cycleTasks.Message)
+	}
+
+	// 2. 获取音乐人阶段任务列表
+	stageTasks, err := request.MusicianTasksNew(ctx, &weapi.MusicianTasksNewReq{})
+	if err != nil {
+		c.cmd.Printf("  获取音乐人阶段任务失败: %s\n", err)
+	} else if stageTasks.Code == 200 {
+		allTasks = append(allTasks, stageTasks.Data.TaskList...)
+	} else {
+		c.cmd.Printf("  获取音乐人阶段任务提示: code=%d msg=%s\n", stageTasks.Code, stageTasks.Message)
+	}
+
+	if len(allTasks) == 0 {
+		c.cmd.Println("  暂无音乐人任务")
 	} else {
 		var claimCount int
-		for _, task := range tasks.Data.TaskList {
+		for _, task := range allTasks {
 			c.cmd.Printf("  任务: %s | 状态: %d | 进度: %d/%d\n",
 				task.Name, task.Status, task.CurrentProgress, task.TargetWorth)
 			if task.Status == 2 || (task.UserMissionId > 0 && task.CurrentProgress >= task.TargetWorth && task.TargetWorth > 0) {
 				id := fmt.Sprintf("%d", task.UserMissionId)
 				period := fmt.Sprintf("%d", task.Period)
-				reward, err := request.MusicianCloudbeanObtain(ctx, &weapi.MusicianCloudbeanObtainReq{Id: id, Period: period})
+				reward, err := request.MusicianCloudbeanObtain(ctx, &weapi.MusicianCloudbeanObtainReq{UserMissionId: id, Period: period})
 				if err != nil {
 					c.cmd.Printf("  ❌ 领取云豆失败 [%s]: %s\n", task.Name, err)
 				} else if reward.Code == 200 {
