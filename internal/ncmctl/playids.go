@@ -345,7 +345,8 @@ func (c *PlayIds) execute(ctx context.Context) error {
 
 	// 9. 顺序执行播放并间隔静默
 	var (
-		totalSuccess int64 = 0
+		totalSuccess    int64 = 0
+		downloadedSongs       = make(map[string]bool) // 单任务已下载歌曲缓存记录
 	)
 
 	for i, songId := range queue {
@@ -371,7 +372,7 @@ func (c *PlayIds) execute(ctx context.Context) error {
 			sourceId = ""
 		}
 
-		// === 第一阶段 MVP：每次播放模拟均请求 SongPlayerV1 并下载音频 ===
+		// === 第三阶段：请求 SongPlayerV1 并根据单任务缓存进行下载模拟 ===
 		songIdInt, err := strconv.ParseInt(songId, 10, 64)
 		if err != nil {
 			c.log("[ERROR] [%d/%d] 解析歌曲 ID 失败: %s", i+1, len(queue), err)
@@ -385,20 +386,28 @@ func (c *PlayIds) execute(ctx context.Context) error {
 
 		var downloadDuration time.Duration
 		var apiSuccess = false
+		var isCached = false
 		playerResp, err := request.SongPlayerV1(ctx, playerReq)
 		if err != nil {
 			c.log("[WARN] [%d/%d] 调用 SongPlayerV1 失败: %s", i+1, len(queue), err)
 		} else if playerResp.Code == 200 && len(playerResp.Data) > 0 {
 			songUrl := playerResp.Data[0].Url
 			if songUrl != "" {
-				c.log("开始拉取资源：songId=%s", songId)
-				downloadStart := time.Now()
-				err = downloadAudioToBuffer(ctx, cli, songUrl)
-				downloadDuration = time.Since(downloadStart)
-				if err != nil {
-					c.log("[WARN] [%d/%d] 下载音频失败: %s", i+1, len(queue), err)
+				if !downloadedSongs[songId] {
+					c.log("开始拉取资源：songId=%s", songId)
+					downloadStart := time.Now()
+					err = downloadAudioToBuffer(ctx, cli, songUrl)
+					downloadDuration = time.Since(downloadStart)
+					if err != nil {
+						c.log("[WARN] [%d/%d] 下载音频失败: %s", i+1, len(queue), err)
+					} else {
+						downloadedSongs[songId] = true
+						apiSuccess = true
+					}
 				} else {
+					isCached = true
 					apiSuccess = true
+					downloadDuration = 0
 				}
 			}
 		}
@@ -408,7 +417,11 @@ func (c *PlayIds) execute(ctx context.Context) error {
 		sleepDuration := time.Duration(songTime) * time.Second
 
 		if apiSuccess {
-			c.log("拉取完成：songId=%s, 来源=CDN, 已耗时=%s, 补等待=%s", songId, formatDurationMs(downloadDuration), formatDuration(int64(sleepDuration.Seconds())))
+			if isCached {
+				c.log("拉取完成：songId=%s, 来源=缓存, 已耗时=0ms, 补等待=%s", songId, formatDuration(int64(sleepDuration.Seconds())))
+			} else {
+				c.log("拉取完成：songId=%s, 来源=CDN, 已耗时=%s, 补等待=%s", songId, formatDurationMs(downloadDuration), formatDuration(int64(sleepDuration.Seconds())))
+			}
 		} else {
 			c.log("拉取失败：songId=%s, 将直接等待完整时长=%s", songId, formatDuration(songTime))
 		}
