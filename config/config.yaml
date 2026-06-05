@@ -43,8 +43,14 @@ network:
   timeout: 60s
   # 网络请求失败重试次数
   retry: 3
-  # 全局自定义 User-Agent
-  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+  # 全局自定义 User-Agent 配置
+  user_agent:
+    # 默认兜底 User-Agent。当下面 weapi 或 eapi 留空时会自动退回使用此值。
+    default: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # Web网页端与PC桌面客户端（weapi协议接口）所使用的 User-Agent
+    weapi: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+    # 移动手机APP客户端（eapi协议接口，如音乐人做任务、防风控套件相关API）所使用的 User-Agent
+    eapi: "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
 
 # 数据缓存配置 (主要记录播放状态进度)
 database:

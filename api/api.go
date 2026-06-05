@@ -46,12 +46,23 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
+const (
+	DefaultWEAPIUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
+	DefaultEAPIUserAgent  = "NeteaseMusic 9.4.95/6806 (iPhone; iOS 16.6.1; zh_CN)"
+)
+
+type UserAgentConfig struct {
+	Default string `json:"default" yaml:"default"`
+	WEAPI   string `json:"weapi" yaml:"weapi"`
+	EAPI    string `json:"eapi" yaml:"eapi"`
+}
+
 type Config struct {
-	Debug     bool          `json:"debug" yaml:"debug"`
-	Timeout   time.Duration `json:"timeout" yaml:"timeout"`
-	Retry     int           `json:"retry" yaml:"retry"`
-	Cookie    cookie.Config `json:"cookie" yaml:"cookie"`
-	UserAgent string        `json:"user_agent" yaml:"user_agent"`
+	Debug     bool            `json:"debug" yaml:"debug"`
+	Timeout   time.Duration   `json:"timeout" yaml:"timeout"`
+	Retry     int             `json:"retry" yaml:"retry"`
+	Cookie    cookie.Config   `json:"cookie" yaml:"cookie"`
+	UserAgent UserAgentConfig `json:"user_agent" yaml:"user_agent"`
 	// Agent   *Agent                     `json:"agent" yaml:"agent"`
 }
 
@@ -134,8 +145,39 @@ func (c *Client) Close(ctx context.Context) error {
 	return c.cookie.Close(ctx)
 }
 
-func (c *Client) NewRequest() *resty.Request {
-	return c.cli.NewRequest()
+func (c *Client) UserAgent(mode CryptoMode) string {
+	ua := c.cfg.UserAgent.Default
+	switch mode {
+	case CryptoModeWEAPI:
+		if c.cfg.UserAgent.WEAPI != "" {
+			return c.cfg.UserAgent.WEAPI
+		}
+		if ua != "" {
+			return ua
+		}
+		return DefaultWEAPIUserAgent
+	case CryptoModeEAPI:
+		if c.cfg.UserAgent.EAPI != "" {
+			return c.cfg.UserAgent.EAPI
+		}
+		if ua != "" {
+			return ua
+		}
+		return DefaultEAPIUserAgent
+	default:
+		if ua != "" {
+			return ua
+		}
+		return DefaultWEAPIUserAgent
+	}
+}
+
+func (c *Client) NewRequest(mode ...CryptoMode) *resty.Request {
+	m := CryptoModeWEAPI
+	if len(mode) > 0 {
+		m = mode[0]
+	}
+	return c.cli.NewRequest().SetHeader("User-Agent", c.UserAgent(m))
 }
 
 func (c *Client) GetClient() *http.Client {
@@ -208,11 +250,7 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 		return nil, err
 	}
 
-	// todo: set User-Agent config
-	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
-	if c.cfg.UserAgent != "" {
-		ua = c.cfg.UserAgent
-	}
+	ua := c.UserAgent(opts.CryptoMode)
 
 	request := c.cli.R().
 		SetContext(ctx).
@@ -378,10 +416,7 @@ func (c *Client) Upload(ctx context.Context, url string, headers map[string]stri
 		body = bar.NewProxyReader(data)
 	}
 
-	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
-	if c.cfg.UserAgent != "" {
-		ua = c.cfg.UserAgent
-	}
+	ua := c.UserAgent(CryptoModeWEAPI)
 
 	response, err := c.cli.R().
 		SetContext(ctx).
@@ -415,10 +450,7 @@ func (c *Client) Download(ctx context.Context, url string, headers map[string]st
 	request.Header.Set("Referer", "https://music.163.com")
 	request.Header.Set("Accept-Encoding", "gzip")
 	request.Header.Set("Accept-Language", "zh-CN,zh-Hans;q=0.9")
-	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"
-	if c.cfg.UserAgent != "" {
-		ua = c.cfg.UserAgent
-	}
+	ua := c.UserAgent(CryptoModeWEAPI)
 	request.Header.Set("User-Agent", ua)
 	request.Header.Set("Range", "bytes=0-")
 	for k, v := range headers {

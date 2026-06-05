@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/3899/ncmm/api"
 )
 
 // uploadLbsResp 上传节点 LBS 响应
@@ -21,7 +23,7 @@ type uploadLbsResp struct {
 func (a *Api) getUploadNode(ctx context.Context, bucket string) (string, error) {
 	url := fmt.Sprintf("http://wanproxy.127.net/lbs?version=1.0&bucketname=%s", bucket)
 	resp, err := a.client.
-		NewRequest().
+		NewRequest(api.CryptoModeEAPI).
 		SetContext(ctx).
 		Get(url)
 	if err != nil {
@@ -45,7 +47,7 @@ func (a *Api) getUploadNode(ctx context.Context, bucket string) (string, error) 
 // 将文件字节以 PUT 方式上传到 NOS 存储
 // 注意: 不使用 client.Upload() 因为它强制使用 POST
 func (a *Api) rawUpload(ctx context.Context, url string, headers map[string]string, data []byte) error {
-	req := a.client.NewRequest().
+	req := a.client.NewRequest(api.CryptoModeEAPI).
 		SetContext(ctx).
 		SetBody(data)
 

@@ -348,10 +348,9 @@ func (a *Api) CloudUpload(ctx context.Context, req *CloudUploadReq) (*CloudUploa
 
 	// 获取上传地址，查找服务上传点
 	resp, err := a.client.
-		NewRequest().
+		NewRequest(api.CryptoModeWEAPI).
 		SetContext(ctx).
 		SetHeader("Referer", "https://music.163.com").
-		SetHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NeteaseMusicDesktop/2.3.17.1034"). // todo: hard code
 		Get(addr)
 	if err != nil || resp.StatusCode() != http.StatusOK {
 		log.Error("user default upload lbs node. get %s error: %v", addr, err)
