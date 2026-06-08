@@ -1,14 +1,24 @@
 package main
 
 import (
+	_ "embed"
+	"strings"
+
 	"github.com/3899/ncmm/internal/ncmm"
 )
 
+//go:embed VERSION
+var versionStr string
+
 var (
-	Version   = "1.0.0"
+	Version   string
 	Commit    = "none"
 	BuildTime = "now"
 )
+
+func init() {
+	Version = strings.TrimSpace(versionStr)
+}
 
 func main() {
 	c := ncmm.New()

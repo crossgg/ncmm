@@ -1,0 +1,84 @@
+# .goreleaser.yaml
+# 详情参考: https://goreleaser.com
+
+version: 2
+
+project_name: ncmm
+
+# 构建输出目录
+dist: ./dist
+
+before:
+  hooks:
+    - go mod tidy
+
+# 编译配置
+builds:
+  - id: windows-amd64
+    env:
+      - CGO_ENABLED=0
+    main: .
+    binary: ncmm
+    ldflags:
+      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.BuildTime={{.CommitDate}}"
+    goos:
+      - windows
+    goarch:
+      - amd64
+
+  - id: linux-amd64
+    env:
+      - CGO_ENABLED=0
+    main: .
+    binary: ncmm
+    ldflags:
+      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.BuildTime={{.CommitDate}}"
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+  - id: linux-arm64
+    env:
+      - CGO_ENABLED=0
+    main: .
+    binary: ncmm
+    ldflags:
+      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.BuildTime={{.CommitDate}}"
+    goos:
+      - linux
+    goarch:
+      - arm64
+
+  - id: linux-armv6
+    env:
+      - CGO_ENABLED=0
+    main: .
+    binary: ncmm
+    ldflags:
+      - -s -w -X "main.Version={{.Version}}" -X "main.Commit={{.FullCommit}}" -X "main.BuildTime={{.CommitDate}}"
+    goos:
+      - linux
+    goarch:
+      - arm
+    goarm:
+      - 6
+
+# 打包配置
+archives:
+  - formats: [ 'tar.gz' ]
+    # 归档文件名模板，例如 ncmm_Windows_x86_64.zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # Windows 平台使用 zip 格式
+    format_overrides:
+      - goos: windows
+        formats: [ 'zip' ]
+    files:
+      - LICENSE
+      - README.md
