@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/3899/ncmm/api"
+	"github.com/3899/ncmm/api/types"
 )
 
 type VipTaskListReq struct {
@@ -390,6 +391,35 @@ func (a *Api) VipBenefitGet(ctx context.Context, req *VipBenefitGetReq) (*VipBen
 	var (
 		url   = "https://interface3.music.163.com/eapi/vipcenter/benefits/get"
 		reply VipBenefitGetResp
+		opts  = api.NewOptions()
+	)
+	opts.CryptoMode = api.CryptoModeEAPI
+	resp, err := a.client.Request(ctx, url, req, &reply, opts)
+	if err != nil {
+		return nil, fmt.Errorf("Request: %w", err)
+	}
+	_ = resp
+	return &reply, nil
+}
+
+type TrialsongListenReq struct {
+	types.EApiReqCommon
+	SongId  string `json:"songId"`
+	AlbumId string `json:"albumId"`
+	Scene   int    `json:"scene"`
+}
+
+type TrialsongListenResp struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    bool   `json:"data"`
+}
+
+// TrialsongListen 上报听歌状态（黑胶/小众歌曲打卡）
+func (a *Api) TrialsongListen(ctx context.Context, req *TrialsongListenReq) (*TrialsongListenResp, error) {
+	var (
+		url   = "https://interface3.music.163.com/eapi/vipmall/interest/trialsong/listen"
+		reply TrialsongListenResp
 		opts  = api.NewOptions()
 	)
 	opts.CryptoMode = api.CryptoModeEAPI

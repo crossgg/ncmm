@@ -104,11 +104,6 @@ func (c *Note) ExecuteForCookie(ctx context.Context, cookieFile string) (int64, 
 	}
 	defer cli.Close(ctx)
 
-	// 设置cookie
-	if err := loadCookies(cli, networkCfg); err != nil {
-		log.Warn("[note] load cookies err: %s", err)
-	}
-
 	eapiCli := eapi.New(cli)
 
 	// 获取笔记内容 (支持 messagesFile 外部文本拉取与并集合并去重)

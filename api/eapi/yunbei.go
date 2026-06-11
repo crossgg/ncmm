@@ -129,33 +129,6 @@ func (a *Api) YunbeiDistributionCreate(ctx context.Context, req *YunbeiDistribut
 }
 
 
-type TrialsongListenReq struct {
-	SongId  string `json:"songId"`
-	AlbumId string `json:"albumId"`
-	Scene   int    `json:"scene"`
-}
-
-type TrialsongListenResp struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    bool   `json:"data"`
-}
-
-// TrialsongListen 上报听歌状态（小众歌曲打卡）
-func (a *Api) TrialsongListen(ctx context.Context, req *TrialsongListenReq) (*TrialsongListenResp, error) {
-	var (
-		url   = "https://interface3.music.163.com/eapi/vipmall/interest/trialsong/listen"
-		reply TrialsongListenResp
-		opts  = api.NewOptions()
-	)
-	opts.CryptoMode = api.CryptoModeEAPI
-	resp, err := a.client.Request(ctx, url, req, &reply, opts)
-	if err != nil {
-		return nil, fmt.Errorf("Request: %w", err)
-	}
-	_ = resp
-	return &reply, nil
-}
 
 type YunbeiReserveInfoReq struct {
 }

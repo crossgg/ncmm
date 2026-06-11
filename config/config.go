@@ -65,17 +65,16 @@ type SignConf struct {
 	EnableMain        bool            `json:"enableMain" yaml:"enableMain"`
 	EnablePrimary     bool            `json:"enablePrimary" yaml:"enablePrimary"` // 兼容旧版
 	EnableSecondaries bool            `json:"enableSecondaries" yaml:"enableSecondaries"`
-	IdentityCacheDays *int            `json:"identityCacheDays" yaml:"identityCacheDays"`
 	YunbeiTask        *YunbeiTaskConf `json:"yunbeiTask" yaml:"yunbeiTask"`
 	Automatic         bool            `json:"automatic" yaml:"automatic"`
 	EnableVipTask     *bool           `json:"enableVipTask" yaml:"enableVipTask"`
 }
 
 type TaskConf struct {
-	Sign        bool `json:"sign" yaml:"sign"`
-	PlayIds     bool `json:"playids" yaml:"playids"`
-	MusicianVip bool `json:"musicianVip" yaml:"musicianVip"`
-	Note        bool `json:"note" yaml:"note"`
+	Sign     bool `json:"sign" yaml:"sign"`
+	PlayIds  bool `json:"playids" yaml:"playids"`
+	Musician bool `json:"musician" yaml:"musician"`
+	Note     bool `json:"note" yaml:"note"`
 }
 
 type MixPlayConf struct {
@@ -127,13 +126,16 @@ type Config struct {
 	Sign        *SignConf        `json:"sign" yaml:"sign"`
 	MixPlay     *MixPlayConf     `json:"mixPlay" yaml:"mixPlay"`
 	Note        *NoteConf        `json:"note" yaml:"note"`
-	MusicianVip *MusicianVipConf `json:"musicianVip" yaml:"musicianVip"`
-	Task        *TaskConf        `json:"task" yaml:"task"`
+	Musician *MusicianConf `json:"musician" yaml:"musician"`
+	Task     *TaskConf     `json:"task" yaml:"task"`
 }
 
-// MusicianVipConf 音乐人黑胶会员任务配置
-type MusicianVipConf struct {
-	Play MusicianVipPlayConf `json:"play" yaml:"play"`
+// MusicianConf 音乐人任务配置
+type MusicianConf struct {
+	EnableMain        bool             `json:"enableMain" yaml:"enableMain"`
+	EnableSecondaries bool             `json:"enableSecondaries" yaml:"enableSecondaries"`
+	IdentityCacheDays *int             `json:"identityCacheDays" yaml:"identityCacheDays"`
+	Play              MusicianPlayConf `json:"play" yaml:"play"`
 }
 
 // NoteConf 笔记发布公共配置
@@ -147,8 +149,8 @@ type NoteConf struct {
 	AutoDelete   *bool         `json:"autoDelete" yaml:"autoDelete"`
 }
 
-// MusicianVipPlayConf 播放任务配置
-type MusicianVipPlayConf struct {
+// MusicianPlayConf 播放任务配置
+type MusicianPlayConf struct {
 	IDs     string        `json:"ids" yaml:"ids"`
 	IDsFile StringOrSlice `json:"idsFile" yaml:"idsFile"`
 	RunMin  int64         `json:"run_min" yaml:"run_min"`
@@ -172,9 +174,9 @@ func (c *Config) Validate() error {
 		if !c.Sign.EnableMain && c.Sign.EnablePrimary {
 			c.Sign.EnableMain = c.Sign.EnablePrimary
 		}
-		if c.Sign.IdentityCacheDays == nil {
-			days := 30
-			c.Sign.IdentityCacheDays = &days
+		if c.Sign.EnableVipTask == nil {
+			enable := true
+			c.Sign.EnableVipTask = &enable
 		}
 		if c.Sign.EnableVipTask == nil {
 			enable := true
@@ -192,6 +194,12 @@ func (c *Config) Validate() error {
 				EnablePublishNote:        true,
 				EnablePlayDailyRecommend: false,
 			}
+		}
+	}
+	if c.Musician != nil {
+		if c.Musician.IdentityCacheDays == nil {
+			days := 30
+			c.Musician.IdentityCacheDays = &days
 		}
 	}
 	return nil
@@ -289,9 +297,9 @@ func (c *Config) ReplaceMagicVariables(name, value string) (*Config, bool) {
 			c.PlayIds.IDsFile[i] = os.Expand(file, mapping)
 		}
 	}
-	if c.MusicianVip != nil {
-		for i, file := range c.MusicianVip.Play.IDsFile {
-			c.MusicianVip.Play.IDsFile[i] = os.Expand(file, mapping)
+	if c.Musician != nil {
+		for i, file := range c.Musician.Play.IDsFile {
+			c.Musician.Play.IDsFile[i] = os.Expand(file, mapping)
 		}
 	}
 	if c.Note != nil {
@@ -384,6 +392,23 @@ func migrateNode(node *yaml.Node) bool {
 					subKey := valNode.Content[j]
 					if subKey.Value == "enablePrimary" {
 						subKey.Value = "enableMain"
+						modified = true
+					}
+				}
+			}
+
+			// Case 4: Rename musicianVip to musician at top-level
+			if keyNode.Value == "musicianVip" {
+				keyNode.Value = "musician"
+				modified = true
+			}
+
+			// Case 5: Rename task.musicianVip to task.musician
+			if keyNode.Value == "task" && valNode.Kind == yaml.MappingNode {
+				for j := 0; j < len(valNode.Content); j += 2 {
+					subKey := valNode.Content[j]
+					if subKey.Value == "musicianVip" {
+						subKey.Value = "musician"
 						modified = true
 					}
 				}

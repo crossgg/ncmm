@@ -521,3 +521,18 @@ func dump(c *resty.Client, resp *resty.Response) error {
 	log.Debug("---------------- response ----------------\n%s\n", string(dumpResp))
 	return nil
 }
+
+// GetDeviceId 从当前客户端的 Cookie 中获取设备 ID
+func (c *Client) GetDeviceId() string {
+	var deviceId string
+	if ck, ok := c.Cookie("https://music.163.com", "deviceId"); ok && ck.Value != "" {
+		deviceId = ck.Value
+	} else if ck, ok := c.Cookie("https://interface3.music.163.com", "deviceId"); ok && ck.Value != "" {
+		deviceId = ck.Value
+	} else if ck, ok := c.Cookie("https://music.163.com", "sDeviceId"); ok && ck.Value != "" {
+		deviceId = ck.Value
+	} else if ck, ok := c.Cookie("https://interface3.music.163.com", "sDeviceId"); ok && ck.Value != "" {
+		deviceId = ck.Value
+	}
+	return deviceId
+}

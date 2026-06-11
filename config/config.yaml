@@ -88,16 +88,12 @@ playids:
 sign:
   # 是否在签到过程中自动领取/完成日常云贝、VIP等进阶任务奖励
   automatic: true
-  # 是否启用主账号日常一键签到（云贝、音乐人、黑胶 VIP 签到）
+  # 是否启用主账号日常一键签到（云贝、黑胶 VIP 签到）
   enableMain: true
   # 是否启用所有辅助账号日常一键签到
   enableSecondaries: true
   # 是否开启黑胶 VIP 会员任务（自动乐签、红心VIP歌曲、调音大师、云贝中心浏览、站外分享、免费福利及成长值领取）
   enableVipTask: true
-  # 账号身份（如音乐人状态）的本地缓存时间（单位：天），默认永久有效。
-  # 注意：这仅用于控制避免重复请求无权限的音乐人任务接口以防风控，与账号登录 Cookie 的有效期无关。
-  # 设置为 0 代表永久有效；设置为 -1 可关闭缓存（每次均发起请求）。
-  identityCacheDays: 0
   # 云贝精细化做任务配置
   yunbeiTask:
     # 浏览会员中心任务开关
@@ -163,8 +159,15 @@ note:
   # 是否在笔记发布成功后自动删除（秒删），以保持个人主页整洁。默认开启
   autoDelete: true
 
-# 音乐人黑胶会员任务配置
-musicianVip:
+# 音乐人任务配置
+musician:
+  # 是否启用主账号执行音乐人任务（日常签到、领云豆、发笔记及接力刷播放量）
+  enableMain: true
+  # 是否启用所有辅助账号执行音乐人任务
+  enableSecondaries: false
+  # 音乐人身份状态的本地缓存时间（单位：天），默认永久有效。
+  # 设置为 0 代表永久有效；设置为 -1 可关闭缓存。
+  identityCacheDays: 0
   # 播放任务配置 (专门用于进阶任务的接力刷歌)
   play:
     # 进阶任务专属覆盖的歌曲 ID（留空继承 playids.ids，支持并集去重合并）
@@ -188,7 +191,7 @@ task:
   sign: true
   # 是否在批量执行中包含播放指定歌曲任务
   playids: true
-  # 是否在批量执行中包含音乐人黑胶会员进阶任务
-  musicianVip: false
+  # 是否在批量执行中包含音乐人日常与VIP进阶任务
+  musician: false
   # 是否在批量执行中包含自动发布/删除图文笔记任务
   note: false

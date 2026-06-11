@@ -237,9 +237,21 @@ func (c *PlayIds) execute(ctx context.Context) error {
 		}
 		if cfg.PlayIds != nil && cfg.PlayIds.EnableMain && cfg.Accounts.Main != "" {
 			executeQueue = append(executeQueue, cfg.Accounts.Main)
+		} else {
+			if cfg.PlayIds != nil && !cfg.PlayIds.EnableMain {
+				c.log("提示: 主账号模拟播放已在配置文件中关闭 (enableMain = false)")
+			} else if cfg.Accounts.Main == "" {
+				c.log("提示: 主账号模拟播放未执行，因为未配置主账号 (accounts.main)")
+			}
 		}
 		if cfg.PlayIds != nil && cfg.PlayIds.EnableSecondaries && len(cfg.Accounts.Secondary) > 0 {
 			executeQueue = append(executeQueue, cfg.Accounts.Secondary...)
+		} else {
+			if cfg.PlayIds != nil && !cfg.PlayIds.EnableSecondaries {
+				c.log("提示: 辅助账号模拟播放已在配置文件中关闭 (enableSecondaries = false)")
+			} else if len(cfg.Accounts.Secondary) == 0 {
+				c.log("提示: 辅助账号模拟播放未执行，因为未配置辅助账号 (accounts.secondary)")
+			}
 		}
 	}
 

@@ -100,3 +100,12 @@ func (i IntsString) MarshalJSON() ([]byte, error) {
 	}
 	return []byte("\"" + string(data) + "\""), nil
 }
+
+// EApiReqCommon EAPI 接口通用请求载荷字段
+type EApiReqCommon struct {
+	DeviceId string      `json:"deviceId,omitempty"`
+	OS       string      `json:"os,omitempty"`
+	VerifyId int         `json:"verifyId,omitempty"`
+	Header   interface{} `json:"header,omitempty"`
+	ER       bool        `json:"e_r,omitempty"`
+}
