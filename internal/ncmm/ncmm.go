@@ -110,6 +110,7 @@ func New() *Root {
 	c.Add(NewSign(c, c.l).Command())
 	c.Add(NewMusicianVip(c, c.l).Command())
 	c.Add(NewNote(c, c.l).Command())
+	c.Add(NewFansGroup(c, c.l).Command())
 	c.Add(NewTask(c, c.l).Command())
 	return c
 }

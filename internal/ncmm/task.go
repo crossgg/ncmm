@@ -16,6 +16,7 @@ type TaskOpts struct {
 	PlayIds     bool
 	MusicianVip bool
 	Note        bool
+	FansGroup   bool
 }
 
 type Task struct {
@@ -51,6 +52,7 @@ func (c *Task) addFlags() {
 	c.cmd.Flags().BoolVar(&c.opts.PlayIds, "playids", false, "执行播放指定歌曲任务")
 	c.cmd.Flags().BoolVar(&c.opts.MusicianVip, "musician-vip", false, "执行音乐人黑胶会员任务")
 	c.cmd.Flags().BoolVar(&c.opts.Note, "note", false, "执行笔记发布任务")
+	c.cmd.Flags().BoolVar(&c.opts.FansGroup, "fansgroup", false, "执行乐迷团任务")
 }
 
 func (c *Task) execute(ctx context.Context) error {
@@ -58,15 +60,17 @@ func (c *Task) execute(ctx context.Context) error {
 	hasFlags := c.cmd.Flags().Changed("sign") ||
 		c.cmd.Flags().Changed("playids") ||
 		c.cmd.Flags().Changed("musician-vip") ||
-		c.cmd.Flags().Changed("note")
+		c.cmd.Flags().Changed("note") ||
+		c.cmd.Flags().Changed("fansgroup")
 
-	var runSign, runPlayIds, runMusicianVip, runNote bool
+	var runSign, runPlayIds, runMusicianVip, runNote, runFansGroup bool
 
 	if hasFlags {
 		runSign = c.opts.Sign
 		runPlayIds = c.opts.PlayIds
 		runMusicianVip = c.opts.MusicianVip
 		runNote = c.opts.Note
+		runFansGroup = c.opts.FansGroup
 	} else {
 		// 从配置文件读取配置开关
 		if c.root.Cfg.Task != nil {
@@ -74,13 +78,14 @@ func (c *Task) execute(ctx context.Context) error {
 			runPlayIds = c.root.Cfg.Task.PlayIds
 			runMusicianVip = c.root.Cfg.Task.MusicianVip
 			runNote = c.root.Cfg.Task.Note
+			runFansGroup = c.root.Cfg.Task.FansGroup
 		} else {
 			c.cmd.Println("[task] 提示: 配置文件中未定义 task 节点且未传递任何命令行标志，默认不执行任何任务")
 			return nil
 		}
 	}
 
-	if !runSign && !runPlayIds && !runMusicianVip && !runNote {
+	if !runSign && !runPlayIds && !runMusicianVip && !runNote && !runFansGroup {
 		c.cmd.Println("[task] 没有需要执行的任务")
 		return nil
 	}
@@ -126,6 +131,17 @@ func (c *Task) execute(ctx context.Context) error {
 			c.cmd.Printf("[task] ❌ [发布图文动态] 执行失败: %s\n", err)
 		} else {
 			c.cmd.Println("[task] ✅ [发布图文动态] 执行成功")
+		}
+		c.cmd.Println()
+	}
+
+	if runFansGroup {
+		c.cmd.Println("[task] >>> 开始执行 [乐迷团任务] <<<")
+		f := NewFansGroup(c.root, c.l)
+		if err := f.execute(ctx); err != nil {
+			c.cmd.Printf("[task] ❌ [乐迷团任务] 执行失败: %s\n", err)
+		} else {
+			c.cmd.Println("[task] ✅ [乐迷团任务] 执行成功")
 		}
 		c.cmd.Println()
 	}

@@ -4,11 +4,11 @@ version: 1.0
 # 顶级多账号管理
 accounts:
   # 音乐人主账号 Cookie 文件路径
-  main: "${HOME}/.ncmm/cookie.json"
+  main: "./cookie.json"
   # 辅助刷播放量账号 Cookie 列表
   secondary:
-    - "${HOME}/.ncmm/fan1.json"
-    - "${HOME}/.ncmm/fan2.json"
+    - "./fan1.json"
+    - "./fan2.json"
 
 # log 日志模块配置
 log:
@@ -23,7 +23,7 @@ log:
   # 滚动日志配置
   rotate:
     # 日志文件保存路径
-    filename: "${HOME}/.ncmm/log/ncm.log"
+    filename: "./log/ncm.log"
     # 单个日志文件最大大小 (单位: MB)
     maxsize: 100
     # 日志文件保留天数
@@ -57,7 +57,7 @@ database:
   # 缓存驱动，目前仅支持 badger
   driver: badger
   # 缓存目录路径
-  path: "${HOME}/.ncmm/database/badger/"
+  path: "./database/badger/"
 
 # playids 播放指定歌曲配置
 playids:
@@ -178,6 +178,15 @@ musicianVip:
     # 两首歌曲之间的最大随机等待间隔（秒，为 0 则继承 playids.gap_max）
     gap_max: 0
 
+# 乐迷团任务配置 (音乐合伙人的乐迷团)
+fansGroup:
+  # 是否启用主账号执行乐迷团任务
+  enableMain: true
+  # 是否启用辅助账号执行乐迷团任务
+  enableSecondaries: false
+  # 乐迷团发布笔记后是否自动删除（留空则继承 note.autoDelete 配置）
+  # autoDeleteNote: true
+
 # 批量任务执行配置
 # 若命令行没有指定任何具体任务(例如运行 ncmm task)，则会执行 task 中所有配置为 true 的任务。
 # 若命令行指定了任意具体任务(例如运行 ncmm task --sign --playids)，则仅会执行这些被命令行明确开启的任务，而忽略其他未指定的任务。
@@ -190,3 +199,6 @@ task:
   musicianVip: false
   # 是否在批量执行中包含自动发布/删除图文笔记任务
   note: false
+  # 是否在批量执行中包含乐迷团任务
+  fansGroup: true
+

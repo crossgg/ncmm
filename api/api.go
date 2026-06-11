@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	neturl "net/url"
+	"strings"
 	"time"
 
 	"github.com/3899/ncmm/pkg/cookie"
@@ -251,6 +252,14 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 	}
 	if len(opts.Cookies) > 0 {
 		request.SetCookies(opts.Cookies)
+	}
+
+	// 针对 163.com 的子域名请求 (如 interface3.music.163.com)，手动将 music.163.com 下的 cookies (如 HostOnly 的 MUSIC_U) 附加到 Request
+	if strings.HasSuffix(uri.Host, ".163.com") && uri.Host != "music.163.com" {
+		mURL, _ := neturl.Parse("https://music.163.com")
+		if mURL != nil {
+			request.SetCookies(c.GetCookies(mURL))
+		}
 	}
 
 	switch opts.CryptoMode {

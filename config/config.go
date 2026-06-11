@@ -72,6 +72,14 @@ type TaskConf struct {
 	PlayIds     bool `json:"playids" yaml:"playids"`
 	MusicianVip bool `json:"musicianVip" yaml:"musicianVip"`
 	Note        bool `json:"note" yaml:"note"`
+	FansGroup   bool `json:"fansGroup" yaml:"fansGroup"`
+}
+
+// FansGroupConf 乐迷团任务配置
+type FansGroupConf struct {
+	EnableMain        bool  `json:"enableMain" yaml:"enableMain"`
+	EnableSecondaries bool  `json:"enableSecondaries" yaml:"enableSecondaries"`
+	AutoDeleteNote    *bool `json:"autoDeleteNote" yaml:"autoDeleteNote"`
 }
 
 type MixPlayConf struct {
@@ -124,6 +132,7 @@ type Config struct {
 	MixPlay     *MixPlayConf     `json:"mixPlay" yaml:"mixPlay"`
 	Note        *NoteConf        `json:"note" yaml:"note"`
 	MusicianVip *MusicianVipConf `json:"musicianVip" yaml:"musicianVip"`
+	FansGroup   *FansGroupConf   `json:"fansGroup" yaml:"fansGroup"`
 	Task        *TaskConf        `json:"task" yaml:"task"`
 }
 

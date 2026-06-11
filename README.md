@@ -78,12 +78,20 @@
      - **播放量达标任务**：若播放次数未达标，自动调用本地 `playids` 的真实模拟播放与上报逻辑。播放过程严格遵守防风控的随机每日上限机制，降低封号风险。
      - **多账号隔离**：支持配置独立的 `fan1.json` 作为进阶任务刷歌账号的 Cookie，确保主账号（音乐人账号）与辅助账号的安全隔离。
 
-6. **📝 笔记单独发布功能 (`ncmm note`)**
+6. **🎧 乐迷团任务 (`ncmm fansgroup`)**
+   - 自动查询乐迷团任务进度，并按剩余进度执行未完成任务：
+     - **播放歌曲**：从任务按钮参数中解析歌曲 ID，通过 `weapi/feedback/weblog` 上报 `startplay` 事件完成播放任务，不等待整首歌播放结束。
+     - **发布图文笔记**：复用 `note` 配置中的标题、正文和图片池，按剩余次数发布图文动态，并可按配置自动删除。
+     - **分享歌曲**：解析任务资源参数，按剩余次数提交分享进度。
+     - **点赞乐迷笔记**：拉取乐迷团推荐内容，过滤本人和已点赞内容后按剩余次数点赞。
+   - 任务状态只展示“已完成 / 未完成”，执行次数按 `allProgress - currentProgress` 自动计算。
+
+7. **📝 笔记单独发布功能 (`ncmm note`)**
    - 将图文笔记发布与秒删逻辑，作为一个独立的公共服务，可单独执行。
    - 支持通过顶级命令 `ncmm note` 独立拉起发布。发布时会自动从图片链接池下载图片上传，并随机选择配置的标题与正文进行发布。
    - 支持设置发布成功后自动秒删（5~30秒随机等待），保证个人主页干净整洁。该服务也被 `musician-vip` 与 `sign` (云贝签到任务) 共享调用。
 
-7. **📁 灵活的 `--home` 多账号工作目录机制**
+8. **📁 灵活的 `--home` 多账号工作目录机制**
    - 支持通过全局参数 `--home` 指定运行目录，自适应实现配置、Cookie、数据库、日志等多账号隔离：
      - **自动加载配置**：未指定 `-c` / `--config` 时，若 `--home` 目录中存在 `config.yaml`，将自动加载它。
      - **独立会话隔离**：每个工作目录拥有独立的 `cookie.json`、Badger 数据库和日志文件，互不干扰。
@@ -188,6 +196,23 @@ sign:
     enableCollectSong: true         # 收藏歌曲任务开关
     enablePublishNote: true         # 发布图文动态任务开关
     enablePlayDailyRecommend: false  # 是否启用云贝签到中的日推歌曲播放任务开关
+
+# 批量任务入口配置；执行 ncmm task 时会读取这里决定跑哪些任务
+task:
+  sign: true
+  playids: false
+  musicianVip: true
+  note: false
+  fansGroup: true
+
+# 乐迷团任务配置
+fansGroup:
+  # 是否使用 accounts.main 执行乐迷团任务
+  enableMain: false
+  # 是否使用 accounts.secondary 执行乐迷团任务
+  enableSecondaries: true
+  # 乐迷团图文任务发布成功后是否自动删除；未配置时继承 note.autoDelete
+  autoDeleteNote: true
 
 # 模拟播放日推干扰配置
 mixPlay:
@@ -517,7 +542,64 @@ ncmm --home run musician-vip
 
 ---
 
-### 5. 笔记单独发布 (`ncmm note`)
+### 5. 乐迷团任务 (`ncmm fansgroup`)
+
+该命令用于执行当前账号已加入乐迷团的日常任务，也可以通过 `ncmm task --fansgroup` 或配置 `task.fansGroup: true` 由批量任务入口自动执行。
+
+```bash
+# 1. 使用默认配置中的乐迷团账号执行
+ncmm fansgroup
+
+# 2. 指定单个 Cookie 文件执行
+ncmm fansgroup --cookie-file run/fan1.json
+
+# 3. 配合 --home 在指定工作目录下执行
+ncmm --home run fansgroup
+
+# 4. 通过批量任务入口只执行乐迷团任务
+ncmm --home run task --fansgroup
+```
+
+#### 💡 运行流程与原理
+1. **账号选择**：命令行传入 `--cookie-file` 时只执行该账号；否则根据 `fansGroup.enableMain` 和 `fansGroup.enableSecondaries` 读取 `accounts.main` / `accounts.secondary`。
+2. **任务状态查询**：自动拉取乐迷团详情、加入状态和任务列表，日志中按“已完成 / 未完成”展示当前进度。
+3. **按剩余进度执行**：每项任务执行次数按 `allProgress - currentProgress` 计算，例如 `发布图文笔记 (0/2)` 会发布 2 次，`(1/2)` 只补 1 次。
+4. **播放任务**：解析任务按钮中的 `songIds`，直接上报 `weapi/feedback/weblog` 的 `startplay` 事件；网页侧点击播放即可完成的任务，不需要等待整首歌曲播放完成。
+5. **图文、分享、点赞任务**：图文任务复用 `note` 配置发布并按 `fansGroup.autoDeleteNote` / `note.autoDelete` 自动删除；分享任务提交分享进度；点赞任务从乐迷团推荐内容中过滤本人和已点赞帖子后执行。
+
+#### 💡 运行日志示例
+```text
+[task] >>> 开始执行 [乐迷团任务] <<<
+[fansgroup] 开始处理账号 (./fan1.json)
+[fansgroup] 当前账号: uid=1024****68 nickname="粉丝一号"
+[fansgroup] 查询粉丝团详情...
+[fansgroup] 粉丝团: 音乐合伙人的乐迷团 (boardId=13827903)
+[fansgroup] 已加入：Joined=true, Level=1 (萌新乐迷)
+  [未完成] 播放歌曲 (0/2)
+  [未完成] 发布图文笔记 (0/2)
+  [已完成] 分享歌曲 (1/1)
+  [未完成] 点赞乐迷笔记 (0/5)
+[fansgroup] 处理播放任务 [播放歌曲]（剩余 2/2）
+  触发 startplay，选择歌曲 3387115952
+  已上报 startplay (1/2)
+  触发 startplay，选择歌曲 3357361025
+  已上报 startplay (2/2)
+[fansgroup] 处理发布笔记任务 [发布图文笔记]（剩余 2/2）
+  [1/2] 准备发布动态："分享好听的歌"
+  [1/2] 动态发布成功，id=37652846861
+  删除动态成功
+  [2/2] 准备发布动态："分享好听的歌"
+  [2/2] 动态发布成功，id=37652859862
+  删除动态成功
+[fansgroup] 处理点赞任务 [点赞乐迷笔记]（剩余 5）
+  [1/5] like success
+  ...
+[fansgroup] 点赞完成：5/5
+```
+
+---
+
+### 6. 笔记单独发布 (`ncmm note`)
 
 该命令用于单独发布图文动态/笔记。该服务也同时被 `musician-vip` 和 `sign` 任务内部直接调用。
 
@@ -539,7 +621,7 @@ ncmm --home run note
 
 ---
 
-### 6. 多账号运行目录最佳实践 (`--home`)
+### 7. 多账号运行目录最佳实践 (`--home`)
 
 在多账号运作或需要使用多个辅助号为自己（音乐人主账号）刷播放量的场景下，推荐使用 `--home` 构建如下目录结构：
 

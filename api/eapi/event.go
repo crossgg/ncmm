@@ -42,6 +42,9 @@ type EventPublishReq struct {
 	PrivacySetting string `json:"privacySetting,omitempty"`
 	// SocialSpaceVisible 是否可见空间 默认 1
 	SocialSpaceVisible int `json:"socialSpaceVisible,omitempty"`
+	// ActivityInfoList 活动信息列表JSON字符串 (乐迷团发布笔记时需要)
+	// 格式: [{"id":"13827903","type":3,"subType":11,"name":"音乐合伙人的乐迷团","selected":true,"canChange":true}]
+	ActivityInfoList string `json:"activityInfoList,omitempty"`
 }
 
 // EventPublishResp 发送动态响应

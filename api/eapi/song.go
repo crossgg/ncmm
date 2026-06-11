@@ -301,4 +301,3 @@ func (a *Api) SongLike(ctx context.Context, req *SongLikeReq) (*SongLikeResp, er
 	_ = resp
 	return &reply, nil
 }
-
