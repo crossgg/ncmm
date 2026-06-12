@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"compress/gzip"
 	"compress/zlib"
 	"context"
 	"crypto/tls"
@@ -235,7 +236,7 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 
 	request := c.cli.R().
 		SetContext(ctx).
-		SetHeader("Host", "music.163.com").
+		SetHeader("Host", uri.Host).
 		SetHeader("Connection", "keep-alive").
 		SetHeader("Accept", "*/*").
 		SetHeader("Accept-Encoding", "gzip, deflate, br").
@@ -372,6 +373,11 @@ func (c *Client) Request(ctx context.Context, url string, req, resp interface{},
 			decrypted, err := crypto.EApiDecrypt(string(decryptData), "")
 			if err == nil {
 				decryptData = decrypted
+				if unzipped, unzipErr := gunzipPayload(decryptData); unzipErr == nil {
+					decryptData = unzipped
+				} else {
+					log.Warn("EAPI gzip payload decode failed: %s", unzipErr)
+				}
 			} else {
 				log.Warn("EApiDecrypt failed: %s", err)
 			}
@@ -505,6 +511,23 @@ func contentEncoding(c *resty.Client, resp *resty.Response) error {
 		return fmt.Errorf("not supported yet Content-Encoding: %s", kind)
 	}
 	return nil
+}
+
+// gunzipPayload 解开 EAPI 加密载荷内部可能包裹的 gzip 数据。
+func gunzipPayload(data []byte) ([]byte, error) {
+	if len(data) < 2 || data[0] != 0x1f || data[1] != 0x8b {
+		return data, nil
+	}
+	r, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	bodyBytes, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	return bodyBytes, nil
 }
 
 func dump(c *resty.Client, resp *resty.Response) error {

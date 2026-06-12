@@ -13,7 +13,6 @@ import (
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/eapi"
-	"github.com/3899/ncmm/api/weapi"
 	"github.com/3899/ncmm/config"
 	"github.com/3899/ncmm/pkg/database"
 	"github.com/3899/ncmm/pkg/log"
@@ -91,6 +90,10 @@ func musicianIdentityCacheKey(cookieFile string) string {
 	return fmt.Sprintf("musician:identity:%s", cookieFile)
 }
 
+func musicianRewardClaimCacheKey(cookieFile string, userMissionId, period int64) string {
+	return fmt.Sprintf("musician:reward:%s:%d:%d", cookieFile, userMissionId, period)
+}
+
 // checkMusicianIdentityCache 检查本地缓存的音乐人身份状态
 // 返回: (isMusician, cacheHit, error)
 func (c *Musician) checkMusicianIdentityCache(ctx context.Context, db database.Database, cookieFile string) (bool, bool, error) {
@@ -140,11 +143,10 @@ func (c *Musician) saveMusicianIdentityCache(ctx context.Context, db database.Da
 
 // musicianContext 保存单次执行所需的公共上下文
 type musicianContext struct {
-	cli      *api.Client
-	eapiCli  *eapi.Api
-	weapiCli *weapi.Api
-	db       database.Database
-	resp     *eapi.MusicianVipTasksResp // 可能为 nil（当缓存命中且仅执行 sign 时）
+	cli     *api.Client
+	eapiCli *eapi.Api
+	db      database.Database
+	resp    *eapi.MusicianVipTasksResp // 可能为 nil（当缓存命中且仅执行 sign 时）
 }
 
 // initMusicianContext 初始化客户端并检查音乐人身份（优先读缓存）
@@ -163,7 +165,7 @@ func (c *Musician) initMusicianContext(ctx context.Context, cookieFile string, n
 		return nil, fmt.Errorf("实例化客户端失败: %w", err)
 	}
 
-	// 初始化数据库
+	// 初始化数据库。音乐人身份缓存是风控前置条件，数据库不可用时不继续执行音乐人接口。
 	db, err := database.New(c.root.Cfg.Database)
 	if err != nil {
 		cli.Close(ctx)
@@ -171,10 +173,9 @@ func (c *Musician) initMusicianContext(ctx context.Context, cookieFile string, n
 	}
 
 	mctx := &musicianContext{
-		cli:      cli,
-		eapiCli:  eapi.New(cli),
-		weapiCli: weapi.New(cli),
-		db:       db,
+		cli:     cli,
+		eapiCli: eapi.New(cli),
+		db:      db,
 	}
 
 	// 检查身份缓存
@@ -192,7 +193,30 @@ func (c *Musician) initMusicianContext(ctx context.Context, cookieFile string, n
 		return mctx, nil
 	}
 
-	// 缓存未命中或需要 VIP 数据 → 调用 API
+	if !needVipData {
+		// 日常签到只需要确认音乐人身份，使用 HAR 中的移动端 EAPI 身份接口。
+		c.cmd.Println("  👉 检查音乐人身份...")
+		role, err := mctx.eapiCli.MusicianRoleGet(ctx, &eapi.MusicianRoleGetReq{})
+		if err != nil {
+			mctx.close(ctx)
+			return nil, fmt.Errorf("MusicianRoleGet: %w", err)
+		}
+		if role.Code != 200 {
+			mctx.close(ctx)
+			return nil, fmt.Errorf("MusicianRoleGet error: code=%d msg=%s", role.Code, role.Message)
+		}
+
+		c.saveMusicianIdentityCache(ctx, db, cookieFile, role.Data.IsMusician)
+		if !role.Data.IsMusician {
+			mctx.close(ctx)
+			return nil, fmt.Errorf("当前账号不是音乐人")
+		}
+
+		c.cmd.Printf("  ✅ 已认证音乐人 | 用户ID: %d | 音乐人ID: %d\n", role.Data.UserId, role.Data.ArtistId)
+		return mctx, nil
+	}
+
+	// 需要 VIP 数据 → 调用 VIP 权益任务 API。
 	c.cmd.Println("  👉 检查任务状态...")
 	resp, err := mctx.eapiCli.MusicianVipTasks(ctx, &eapi.MusicianVipTasksReq{ER: false})
 	if err != nil {
@@ -437,51 +461,205 @@ func (c *Musician) runVipForCookie(ctx context.Context, cookieFile string) error
 func (c *Musician) doSignPhase(ctx context.Context, mctx *musicianContext, cookieFile string) {
 	c.cmd.Println("  👉 [第一阶段] 开始执行音乐人日常任务 (日常签到与云豆领奖)...")
 
-	// 1. 音乐人日常签到
+	if deviceId := mctx.cli.GetDeviceId(); deviceId != "" {
+		c.cmd.Printf("    👉 [deviceId] 使用 Cookie 中的设备 ID: %s\n", deviceId)
+	}
+
+	// 1. 执行前先展示任务列表，便于观察签到前后的状态变化。
+	c.cmd.Println("    👉 音乐人任务列表（执行前）...")
+	beforeTasks := c.fetchMusicianRewardTasks(ctx, mctx)
+	c.printMusicianTaskList(beforeTasks)
+
+	// 2. 音乐人日常签到。HAR 对应 /api/creator/user/access。
 	c.cmd.Println("    👉 开始音乐人日常签到...")
-	signResp, err := mctx.weapiCli.MusicianSign(ctx, &weapi.MusicianSignReq{})
+	signResp, err := mctx.eapiCli.MusicianSign(ctx, &eapi.MusicianSignReq{})
 	if err != nil {
 		c.cmd.Printf("    ❌ 音乐人日常签到失败: %v\n", err)
-	} else if signResp.Code == 200 {
+	} else if signResp.Code == 200 && signResp.Data {
 		c.cmd.Println("    ✅ 音乐人日常签到成功")
+	} else if signResp.Code == 200 {
+		c.cmd.Println("    ℹ️ 音乐人日常签到接口已成功返回，但未返回新的签到状态")
 	} else {
 		c.cmd.Printf("    ℹ️ 音乐人日常签到提示: code=%d msg=%s\n", signResp.Code, signResp.Message)
 	}
 
-	// 2. 领取音乐人周期/阶段任务云豆奖励
-	var allTasks []weapi.MusicianTask
-	cycleTasks, err := mctx.weapiCli.MusicianTasks(ctx, &weapi.MusicianTasksReq{})
-	if err == nil && cycleTasks.Code == 200 {
-		allTasks = append(allTasks, cycleTasks.Data.TaskList...)
-	}
-	stageTasks, err := mctx.weapiCli.MusicianTasksNew(ctx, &weapi.MusicianTasksNewReq{})
-	if err == nil && stageTasks.Code == 200 {
-		allTasks = append(allTasks, stageTasks.Data.TaskList...)
+	// 3. 签到后刷新任务状态，领取可领取的周期/阶段云豆奖励。
+	afterSignTasks := c.fetchMusicianRewardTasks(ctx, mctx)
+	claimCount := c.claimMusicianRewards(ctx, mctx, cookieFile, afterSignTasks)
+
+	finalTasks := afterSignTasks
+	if claimCount > 0 {
+		finalTasks = c.fetchMusicianRewardTasks(ctx, mctx)
 	}
 
-	if len(allTasks) > 0 {
-		var claimCount int
-		for _, task := range allTasks {
-			c.cmd.Printf("    - 任务: %-15s | 状态: %d | 进度: %d/%d\n",
-				task.Name, task.Status, task.CurrentProgress, task.TargetWorth)
-			if task.Status == 2 || (task.UserMissionId > 0 && task.CurrentProgress >= task.TargetWorth && task.TargetWorth > 0) {
-				id := fmt.Sprintf("%d", task.UserMissionId)
-				period := fmt.Sprintf("%d", task.Period)
-				reward, err := mctx.weapiCli.MusicianCloudbeanObtain(ctx, &weapi.MusicianCloudbeanObtainReq{UserMissionId: id, Period: period})
-				if err != nil {
-					c.cmd.Printf("      ❌ 领取云豆失败 [%s]: %v\n", task.Name, err)
-				} else if reward.Code == 200 {
-					c.cmd.Printf("      🎉 成功领取云豆奖励 [%s] (UserMissionId: %s)\n", task.Name, id)
-					claimCount++
-				}
-			}
-		}
-		if claimCount == 0 {
-			c.cmd.Println("    ℹ️ 没有可领取的云豆奖励")
-		}
-	} else {
-		c.cmd.Println("    ℹ️ 暂无音乐人周期/阶段任务奖励")
+	// 4. 展示执行后任务列表。
+	c.cmd.Println("    👉 音乐人任务列表（执行后）...")
+	c.printMusicianTaskList(finalTasks)
+}
+
+func (c *Musician) claimMusicianRewards(ctx context.Context, mctx *musicianContext, cookieFile string, tasks []eapi.MusicianMissionTask) int {
+	if len(tasks) == 0 {
+		c.cmd.Println("    ℹ️ 没有可领取的云豆奖励")
+		return 0
 	}
+
+	var claimCount int
+	claimed := make(map[string]bool)
+	for _, task := range tasks {
+		if !isMusicianRewardClaimable(task) {
+			continue
+		}
+
+		key := fmt.Sprintf("%d:%d", task.UserMissionId, task.Period)
+		if claimed[key] {
+			continue
+		}
+		claimed[key] = true
+		if c.isMusicianRewardClaimCached(ctx, mctx, cookieFile, task) {
+			continue
+		}
+
+		name := musicianTaskDisplayName(task)
+		reward, err := mctx.eapiCli.MusicianRewardObtain(ctx, &eapi.MusicianRewardObtainReq{
+			UserMissionId: task.UserMissionId,
+			Period:        task.Period,
+		})
+		if err != nil {
+			c.cmd.Printf("    ❌ 领取 [%s]云豆奖励失败: %v\n", name, err)
+			continue
+		}
+		if reward.Code != 200 {
+			c.cmd.Printf("    ℹ️ 领取 [%s]云豆奖励提示: code=%d msg=%s\n", name, reward.Code, reward.Message)
+			continue
+		}
+
+		if rewardWorth := musicianTaskRewardWorth(task); rewardWorth != "" {
+			c.cmd.Printf("    🎉 成功领取 [%s]云豆奖励：+%s\n", name, rewardWorth)
+		} else {
+			c.cmd.Printf("    🎉 成功领取 [%s]云豆奖励\n", name)
+		}
+		c.saveMusicianRewardClaimCache(ctx, mctx, cookieFile, task)
+		claimCount++
+	}
+
+	if claimCount == 0 {
+		c.cmd.Println("    ℹ️ 没有可领取的云豆奖励")
+	}
+	return claimCount
+}
+
+func (c *Musician) isMusicianRewardClaimCached(ctx context.Context, mctx *musicianContext, cookieFile string, task eapi.MusicianMissionTask) bool {
+	if mctx.db == nil || task.UserMissionId <= 0 {
+		return false
+	}
+	ok, err := mctx.db.Exists(ctx, musicianRewardClaimCacheKey(cookieFile, task.UserMissionId, task.Period))
+	if err != nil {
+		log.Warn("[musician] 读取云豆领奖缓存失败: %s", err)
+		return false
+	}
+	return ok
+}
+
+func (c *Musician) saveMusicianRewardClaimCache(ctx context.Context, mctx *musicianContext, cookieFile string, task eapi.MusicianMissionTask) {
+	if mctx.db == nil || task.UserMissionId <= 0 {
+		return
+	}
+	if err := mctx.db.Set(ctx, musicianRewardClaimCacheKey(cookieFile, task.UserMissionId, task.Period), "1", 45*24*time.Hour); err != nil {
+		log.Warn("[musician] 写入云豆领奖缓存失败: %s", err)
+	}
+}
+
+func (c *Musician) fetchMusicianRewardTasks(ctx context.Context, mctx *musicianContext) []eapi.MusicianMissionTask {
+	var allTasks []eapi.MusicianMissionTask
+	seen := make(map[string]bool)
+	appendTasks := func(tasks []eapi.MusicianMissionTask) {
+		for _, task := range tasks {
+			key := fmt.Sprintf("%d:%d:%d", task.UserMissionId, task.MissionId, task.Period)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			allTasks = append(allTasks, task)
+		}
+	}
+
+	// 日常签到周期任务：移动端抓包主要使用 platform=300, tag=101。
+	if cycle, err := mctx.eapiCli.MusicianMissionCycleList(ctx, &eapi.MusicianMissionListReq{Platform: 300, Tag: 101}); err == nil && cycle.Code == 200 {
+		appendTasks(cycle.Data.List)
+	} else if err != nil {
+		c.cmd.Printf("    ⚠️ 获取音乐人周期任务失败: %v\n", err)
+	}
+
+	// 兼容网页版/旧移动端入口：HAR 中也出现 actionType=102, platform=200 的周期列表。
+	if cycle, err := mctx.eapiCli.MusicianMissionCycleList(ctx, &eapi.MusicianMissionListReq{Platform: 200, ActionType: 102}); err == nil && cycle.Code == 200 {
+		appendTasks(cycle.Data.List)
+	}
+
+	// 阶段任务用于补充可领取云豆，抓包参数为 platform=300, tag=303。
+	if stage, err := mctx.eapiCli.MusicianMissionStageList(ctx, &eapi.MusicianMissionListReq{Platform: 300, Tag: 303}); err == nil && stage.Code == 200 {
+		appendTasks(stage.Data.List)
+	} else if err != nil {
+		c.cmd.Printf("    ⚠️ 获取音乐人阶段任务失败: %v\n", err)
+	}
+
+	return allTasks
+}
+
+func musicianTaskDisplayName(task eapi.MusicianMissionTask) string {
+	for _, v := range []string{task.Description, task.Name, task.Title} {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return v
+		}
+	}
+	if task.MissionId > 0 {
+		return fmt.Sprintf("mission-%d", task.MissionId)
+	}
+	return "unknown"
+}
+
+func (c *Musician) printMusicianTaskList(tasks []eapi.MusicianMissionTask) {
+	if len(tasks) == 0 {
+		c.cmd.Println("    ℹ️ 暂无音乐人周期/阶段任务")
+		return
+	}
+
+	for _, task := range tasks {
+		c.cmd.Printf("    - 任务: %-20s | %s | 进度: %d/%d | 云豆: %s\n",
+			musicianTaskDisplayName(task),
+			musicianTaskStatusText(task),
+			task.ProgressRate,
+			task.TargetCount,
+			musicianTaskRewardWorth(task),
+		)
+	}
+}
+
+func musicianTaskStatusText(task eapi.MusicianMissionTask) string {
+	if task.Status == 100 {
+		return "已完成"
+	}
+	return "未完成"
+}
+
+func musicianTaskRewardWorth(task eapi.MusicianMissionTask) string {
+	return strings.TrimSpace(task.RewardWorth)
+}
+
+func isMusicianRewardClaimable(task eapi.MusicianMissionTask) bool {
+	if task.UserMissionId <= 0 {
+		return false
+	}
+	if task.Status != 100 && task.NeedToReceive <= 0 {
+		return false
+	}
+	if task.RewardId <= 0 && task.RewardWorth == "" && task.NeedToReceive <= 0 {
+		return false
+	}
+	if task.TargetCount > 0 && task.ProgressRate < task.TargetCount && task.NeedToReceive <= 0 {
+		return false
+	}
+	return true
 }
 
 // doVipPhase 执行第二阶段：音乐人 VIP 进阶任务
