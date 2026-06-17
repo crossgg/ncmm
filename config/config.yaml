@@ -213,3 +213,30 @@ task:
   # 是否在批量执行中包含乐迷团任务
   fansgroup: true
 
+  # 任务调度与队列配置
+  # 执行模式:
+  #   - "by-task-group": 跨账号分群组串行。所有账号跑完快任务，再开始跑慢任务。
+  #   - "by-account": 单账号自包容串行。每个账号执行完快任务和慢任务后，再轮到下一个账号。
+  mode: "by-task-group"
+
+  # 快任务列表。包含所有耗时秒级的常规打卡任务。
+  fast_tasks:
+    - VipTask              # 黑胶 VIP 任务
+    - Reserve              # 预约领云贝
+    - ViewVipCenter        # 浏览会员中心
+    - LikeComment          # 点赞评论和动态
+    - FollowArtist         # 关注歌手
+    - LikeSong             # 红心歌曲
+    - CollectSong          # 收藏歌曲
+    - PublishNote          # 发布图文动态
+    - musician-sign        # 音乐人日常签到
+    - note                 # 自动发布/删除图文笔记任务
+    - fansgroup            # 乐迷团任务
+
+  # 慢任务列表。包含所有听歌、刷播放量等耗时数分钟到数十分钟的任务。
+  slow_tasks:
+    - ListenIndie          # 探索小众歌曲 (约7分钟)
+    - PlayDailyRecommend   # 日推歌曲播放 (约30~45分钟)
+    - playids              # 播放指定歌曲任务
+    - musician-vip         # 音乐人VIP进阶任务 (含播放任务)
+

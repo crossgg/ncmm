@@ -6,7 +6,9 @@ package ncmm
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"path/filepath"
+	"time"
 
 	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/weapi"
@@ -84,7 +86,7 @@ func (c *SignIn) execute(ctx context.Context) error {
 	// 1. 主账号一键签到
 	if cfg.Sign != nil && cfg.Sign.EnableMain && cfg.Accounts.Main != "" {
 		c.cmd.Printf("[sign] >>>>>> 开始主账号签到 (%s) <<<<<<\n", cfg.Accounts.Main)
-		if err := c.runSignForCookie(ctx, cfg.Accounts.Main, true); err != nil {
+		if err := c.RunSignForCookie(ctx, cfg.Accounts.Main, true, nil); err != nil {
 			c.cmd.Printf("[sign] ❌ 主账号签到失败: %s\n", err)
 		}
 		hasExecuted = true
@@ -100,7 +102,7 @@ func (c *SignIn) execute(ctx context.Context) error {
 	if cfg.Sign != nil && cfg.Sign.EnableSecondaries && len(cfg.Accounts.Secondary) > 0 {
 		for _, secCookie := range cfg.Accounts.Secondary {
 			c.cmd.Printf("[sign] >>>>>> 开始辅助账号签到 (%s) <<<<<<\n", secCookie)
-			if err := c.runSignForCookie(ctx, secCookie, false); err != nil {
+			if err := c.RunSignForCookie(ctx, secCookie, false, nil); err != nil {
 				c.cmd.Printf("[sign] ❌ 辅助账号签到失败: %s\n", err)
 			}
 			hasExecuted = true
@@ -121,7 +123,15 @@ func (c *SignIn) execute(ctx context.Context) error {
 	return nil
 }
 
-func (c *SignIn) runSignForCookie(ctx context.Context, cookieFile string, isPrimary bool) error {
+func (c *SignIn) RunSignForCookie(ctx context.Context, cookieFile string, isPrimary bool, allowedTasks map[string]bool) error {
+	if len(allowedTasks) == 0 {
+		allowedTasks = map[string]bool{
+			"VipTask": true, "Reserve": true, "ViewVipCenter": true, "LikeComment": true,
+			"FollowArtist": true, "LikeSong": true, "CollectSong": true, "PublishNote": true,
+			"ListenIndie": true, "PlayDailyRecommend": true,
+		}
+	}
+
 	absPath, err := filepath.Abs(cookieFile)
 	if err != nil {
 		return fmt.Errorf("解析 cookie 路径失败: %w", err)
@@ -187,16 +197,28 @@ func (c *SignIn) runSignForCookie(ctx context.Context, cookieFile string, isPrim
 		}
 
 		// 执行云贝系列自动任务打卡并领奖
-		c.handleYunbeiTasks(ctx, cli, request, userId, cookieFile)
+		hasYunbeiTasks := false
+		yunbeiKeys := []string{"Reserve", "ViewVipCenter", "LikeComment", "FollowArtist", "LikeSong", "CollectSong", "PublishNote", "ListenIndie", "PlayDailyRecommend"}
+		for _, k := range yunbeiKeys {
+			if allowedTasks[k] {
+				hasYunbeiTasks = true
+				break
+			}
+		}
+		if hasYunbeiTasks {
+			c.handleYunbeiTasks(ctx, cli, request, userId, cookieFile, allowedTasks)
+		}
 	}
 
 	// 2. 黑胶 VIP 会员任务
-	c.cmd.Println("  --- VIP 任务 ---")
-	if vipPoint != nil && vipPoint.Code == 200 {
-		if vipPoint.Data.UserLevel.LatestVipStatus != 1 {
-			c.cmd.Printf("  暂无会员权益 (VIP 状态: %v)\n", vipPoint.Data.UserLevel.LatestVipStatus)
-		} else {
-			c.handleVipTasks(ctx, cli, request, vipPoint.Data.UserLevel.Level)
+	if allowedTasks["VipTask"] {
+		c.cmd.Println("  --- VIP 任务 ---")
+		if vipPoint != nil && vipPoint.Code == 200 {
+			if vipPoint.Data.UserLevel.LatestVipStatus != 1 {
+				c.cmd.Printf("  暂无会员权益 (VIP 状态: %v)\n", vipPoint.Data.UserLevel.LatestVipStatus)
+			} else {
+				c.handleVipTasks(ctx, cli, request, vipPoint.Data.UserLevel.Level)
+			}
 		}
 	}
 
@@ -204,6 +226,12 @@ func (c *SignIn) runSignForCookie(ctx context.Context, cookieFile string, isPrim
 	refresh, err := request.TokenRefresh(ctx, &weapi.TokenRefreshReq{})
 	if err != nil || refresh.Code != 200 {
 		log.Debug("TokenRefresh err: %s", err)
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(5+rand.Intn(11)) * time.Second):
+		syncSessionConfig(ctx, cli, cookieFile, userId, nil, c.root.Cfg.Database)
 	}
 
 	c.cmd.Printf("[sign] -----------------------------------------------\n\n")

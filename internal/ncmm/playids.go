@@ -272,6 +272,67 @@ func (c *PlayIds) execute(ctx context.Context) error {
 	return nil
 }
 
+func (c *PlayIds) RunForCookie(ctx context.Context, cookieFile string) error {
+	var rawIds []string
+	if c.opts.Ids != "" {
+		parts := strings.Split(c.opts.Ids, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				rawIds = append(rawIds, part)
+			}
+		}
+	}
+	if c.opts.IdsFile != "" {
+		fileIds, err := parseIdsFromFile(c.opts.IdsFile)
+		if err != nil {
+			c.log("[WARN] 读取命令行 --ids-file (%s) 失败: %s，该来源将被跳过", c.opts.IdsFile, err)
+		} else {
+			rawIds = append(rawIds, fileIds...)
+		}
+	}
+	if c.root.Cfg.PlayIds != nil {
+		if c.root.Cfg.PlayIds.IDs != "" {
+			parts := strings.Split(c.root.Cfg.PlayIds.IDs, ",")
+			for _, part := range parts {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					rawIds = append(rawIds, part)
+				}
+			}
+		}
+		for _, file := range uniqueStrings(c.root.Cfg.PlayIds.IDsFile) {
+			if file != "" {
+				fileIds, err := parseIdsFromFile(file)
+				if err != nil {
+					c.log("[WARN] 读取配置文件 playids.idsFile (%s) 失败: %s，该来源将被跳过", file, err)
+				} else {
+					rawIds = append(rawIds, fileIds...)
+				}
+			}
+		}
+	}
+	if len(rawIds) == 0 {
+		return fmt.Errorf("未指定任何有效的歌曲ID。请使用 --ids/--ids-file 传参，或在 config.yaml 默认配置中指定")
+	}
+	uniqueIds := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, id := range rawIds {
+		if !seen[id] {
+			seen[id] = true
+			uniqueIds = append(uniqueIds, id)
+		}
+	}
+	c.log(">>>>>> 开始为账号 (%s) 执行模拟播放 <<<<<<", cookieFile)
+	if _, err := c.executeForCookie(ctx, cookieFile, uniqueIds); err != nil {
+		c.log("[ERROR] 账号 (%s) 模拟播放失败: %s", cookieFile, err)
+		return err
+	}
+	c.log("--------------------------------------------------\n")
+	return nil
+}
+
+
 func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqueIds []string) (int64, error) {
 	// 1. 网络客户端与登录校验
 	networkCfg := c.root.Cfg.Network
@@ -308,6 +369,8 @@ func (c *PlayIds) executeForCookie(ctx context.Context, cookieFile string, uniqu
 		return 0, fmt.Errorf("本地数据库初始化失败: %w", err)
 	}
 	defer db.Close(ctx)
+
+	syncSessionConfig(ctx, cli, cookieFile, user.Account.Id, db, nil)
 
 	expire, err := utils.TimeUntilMidnight("Local")
 	if err != nil {

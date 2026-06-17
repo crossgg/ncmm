@@ -71,12 +71,15 @@ type SignConf struct {
 }
 
 type TaskConf struct {
-	Sign         bool `json:"sign" yaml:"sign"`
-	PlayIds      bool `json:"playids" yaml:"playids"`
-	MusicianSign bool `json:"musician-sign" yaml:"musician-sign"`
-	MusicianVip  bool `json:"musician-vip" yaml:"musician-vip"`
-	Note         bool `json:"note" yaml:"note"`
-	FansGroup    bool `json:"fansgroup" yaml:"fansgroup"`
+	Sign         bool     `json:"sign" yaml:"sign"`
+	PlayIds      bool     `json:"playids" yaml:"playids"`
+	MusicianSign bool     `json:"musician-sign" yaml:"musician-sign"`
+	MusicianVip  bool     `json:"musician-vip" yaml:"musician-vip"`
+	Note         bool     `json:"note" yaml:"note"`
+	FansGroup    bool     `json:"fansgroup" yaml:"fansgroup"`
+	Mode         string   `json:"mode" yaml:"mode"`
+	FastTasks    []string `json:"fast_tasks" yaml:"fast_tasks"`
+	SlowTasks    []string `json:"slow_tasks" yaml:"slow_tasks"`
 }
 
 // FansGroupConf 乐迷团任务配置
@@ -220,6 +223,23 @@ func (c *Config) Validate() error {
 		if c.Musician.EnableVipPlay == nil {
 			enable := true
 			c.Musician.EnableVipPlay = &enable
+		}
+	}
+	if c.Task != nil {
+		if c.Task.Mode == "" {
+			c.Task.Mode = "by-task-group"
+		}
+		if len(c.Task.FastTasks) == 0 {
+			c.Task.FastTasks = []string{
+				"VipTask", "Reserve", "ViewVipCenter", "LikeComment",
+				"FollowArtist", "LikeSong", "CollectSong", "PublishNote",
+				"musician-sign", "note", "fansgroup",
+			}
+		}
+		if len(c.Task.SlowTasks) == 0 {
+			c.Task.SlowTasks = []string{
+				"ListenIndie", "PlayDailyRecommend", "playids", "musician-vip",
+			}
 		}
 	}
 	return nil

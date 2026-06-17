@@ -17,7 +17,7 @@ import (
 	"github.com/3899/ncmm/api/weapi"
 )
 
-func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request *weapi.Api, userId int64, cookieFile string) {
+func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request *weapi.Api, userId int64, cookieFile string, allowedTasks map[string]bool) {
 	eapiRequest := eapi.New(cli)
 	// 1. 获取当前待做任务列表 (作为执行云贝签到任务的前置动作)
 	task, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
@@ -36,7 +36,9 @@ func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request
 	}
 
 	// 2. 预约领云贝 (特殊板块)
-	c.handleReserveYunbei(ctx, eapiRequest)
+	if allowedTasks["Reserve"] {
+		c.handleReserveYunbei(ctx, eapiRequest)
+	}
 
 	// 3. 筛选并执行未完成的任务
 	var playDailyRecommendTaskName string
@@ -47,65 +49,81 @@ func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request
 
 		switch v.TaskName {
 		case "浏览会员中心":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableViewVipCenter {
-				c.cmd.Println("  👉 开始执行 [浏览会员中心] 任务...")
-				c.doViewVipCenter(ctx, eapiRequest)
-			} else {
-				c.cmd.Println("  提示: 浏览会员中心任务已在配置文件中关闭(enableViewVipCenter = false)，跳过执行")
+			if allowedTasks["ViewVipCenter"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableViewVipCenter {
+					c.cmd.Println("  👉 开始执行 [浏览会员中心] 任务...")
+					c.doViewVipCenter(ctx, eapiRequest)
+				} else {
+					c.cmd.Println("  提示: 浏览会员中心任务已在配置文件中关闭(enableViewVipCenter = false)，跳过执行")
+				}
 			}
 		case "点赞评论、动态", "点赞":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableLikeComment {
-				c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [点赞评论] 开关控制)...\n", v.TaskName)
-				c.doLikeComments(ctx, request)
-			} else {
-				c.cmd.Println("  提示: 点赞评论任务已在配置文件中关闭(enableLikeComment = false)，跳过执行")
+			if allowedTasks["LikeComment"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableLikeComment {
+					c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [点赞评论] 开关控制)...\n", v.TaskName)
+					c.doLikeComments(ctx, request)
+				} else {
+					c.cmd.Println("  提示: 点赞评论任务已在配置文件中关闭(enableLikeComment = false)，跳过执行")
+				}
 			}
 		case "探索小众歌曲":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableListenIndie {
-				c.cmd.Println("  👉 开始执行 [探索小众歌曲] 听歌任务...")
-				c.doListenIndie(ctx, eapiRequest, request)
-			} else {
-				c.cmd.Println("  提示: 小众歌曲任务已在配置文件中关闭(enableListenIndie = false)，跳过执行")
+			if allowedTasks["ListenIndie"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableListenIndie {
+					c.cmd.Println("  👉 开始执行 [探索小众歌曲] 听歌任务...")
+					c.doListenIndie(ctx, eapiRequest, request)
+				} else {
+					c.cmd.Println("  提示: 小众歌曲任务已在配置文件中关闭(enableListenIndie = false)，跳过执行")
+				}
 			}
 		case "关注歌手":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableFollowArtist {
-				c.cmd.Println("  👉 开始执行 [关注歌手] 任务...")
-				c.doFollowArtist(ctx, eapiRequest)
-			} else {
-				c.cmd.Println("  提示: 关注歌手任务已在配置文件中关闭(enableFollowArtist = false)，跳过执行")
+			if allowedTasks["FollowArtist"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableFollowArtist {
+					c.cmd.Println("  👉 开始执行 [关注歌手] 任务...")
+					c.doFollowArtist(ctx, eapiRequest)
+				} else {
+					c.cmd.Println("  提示: 关注歌手任务已在配置文件中关闭(enableFollowArtist = false)，跳过执行")
+				}
 			}
 		case "收藏":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableCollectSong {
-				c.cmd.Println("  👉 开始执行 [收藏] 任务 (使用 [收藏歌曲] 开关控制)...")
-				c.doCollectSong(ctx, request, userId)
-			} else {
-				c.cmd.Println("  提示: 收藏歌曲任务已在配置文件中关闭(enableCollectSong = false)，跳过执行")
+			if allowedTasks["CollectSong"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableCollectSong {
+					c.cmd.Println("  👉 开始执行 [收藏] 任务 (使用 [收藏歌曲] 开关控制)...")
+					c.doCollectSong(ctx, request, userId)
+				} else {
+					c.cmd.Println("  提示: 收藏歌曲任务已在配置文件中关闭(enableCollectSong = false)，跳过执行")
+				}
 			}
 		case "红心歌曲", "红心":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableLikeSong {
-				c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [红心歌曲] 开关控制)...\n", v.TaskName)
-				c.doLikeSong(ctx, eapiRequest)
-			} else {
-				c.cmd.Println("  提示: 红心歌曲任务已在配置文件中关闭(enableLikeSong = false)，跳过执行")
+			if allowedTasks["LikeSong"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableLikeSong {
+					c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [红心歌曲] 开关控制)...\n", v.TaskName)
+					c.doLikeSong(ctx, eapiRequest)
+				} else {
+					c.cmd.Println("  提示: 红心歌曲任务已在配置文件中关闭(enableLikeSong = false)，跳过执行")
+				}
 			}
 		case "发布动态", "分享动态", "发布图文", "发布图文动态", "发布笔记", "分享图文", "发布图文笔记":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnablePublishNote {
-				c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [发布动态] 开关控制)...\n", v.TaskName)
-				c.doPublishNote(ctx, cookieFile)
-			} else {
-				c.cmd.Println("  提示: 发布动态任务已在配置文件中关闭(enablePublishNote = false)，跳过执行")
+			if allowedTasks["PublishNote"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnablePublishNote {
+					c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [发布动态] 开关控制)...\n", v.TaskName)
+					c.doPublishNote(ctx, cookieFile)
+				} else {
+					c.cmd.Println("  提示: 发布动态任务已在配置文件中关闭(enablePublishNote = false)，跳过执行")
+				}
 			}
 		case "听歌30分钟", "听歌", "每日推荐", "听推荐歌曲", "听推荐歌单中的歌", "听音乐30分钟":
-			if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnablePlayDailyRecommend {
-				playDailyRecommendTaskName = v.TaskName
-			} else {
-				c.cmd.Println("  提示: 播放日推任务已在配置文件中关闭(enablePlayDailyRecommend = false)，跳过执行")
+			if allowedTasks["PlayDailyRecommend"] {
+				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnablePlayDailyRecommend {
+					playDailyRecommendTaskName = v.TaskName
+				} else {
+					c.cmd.Println("  提示: 播放日推任务已在配置文件中关闭(enablePlayDailyRecommend = false)，跳过执行")
+				}
 			}
 		}
 	}
 
 	// 4. 执行日推播放任务 (前台串行，作为当前账号最后一个任务执行)
-	if playDailyRecommendTaskName != "" {
+	if playDailyRecommendTaskName != "" && allowedTasks["PlayDailyRecommend"] {
 		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [播放日推] 开关控制)...\n", playDailyRecommendTaskName)
 		c.doPlayDailyRecommend(ctx, cookieFile, playDailyRecommendTaskName)
 	}

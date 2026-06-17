@@ -178,6 +178,8 @@ func (c *Musician) initMusicianContext(ctx context.Context, cookieFile string, n
 		db:      db,
 	}
 
+	syncSessionConfig(ctx, cli, cookieFile, 0, db, nil)
+
 	// 检查身份缓存
 	isMusician, cacheHit, _ := c.checkMusicianIdentityCache(ctx, db, cookieFile)
 
@@ -340,7 +342,7 @@ func (c *Musician) executeSign(ctx context.Context) error {
 	// 1. 主账号
 	if cfg.Musician != nil && cfg.Musician.EnableMain && cfg.Accounts.Main != "" {
 		c.cmd.Printf("[musician sign] >>>>>> 开始主账号音乐人日常签到 (%s) <<<<<<\n", cfg.Accounts.Main)
-		if err := c.runSignForCookie(ctx, cfg.Accounts.Main); err != nil {
+		if err := c.RunSignForCookie(ctx, cfg.Accounts.Main); err != nil {
 			c.cmd.Printf("[musician sign] ❌ 主账号签到失败: %s\n", err)
 		}
 		hasExecuted = true
@@ -356,7 +358,7 @@ func (c *Musician) executeSign(ctx context.Context) error {
 	if cfg.Musician != nil && cfg.Musician.EnableSecondaries && len(cfg.Accounts.Secondary) > 0 {
 		for _, secCookie := range cfg.Accounts.Secondary {
 			c.cmd.Printf("[musician sign] >>>>>> 开始辅助账号音乐人日常签到 (%s) <<<<<<\n", secCookie)
-			if err := c.runSignForCookie(ctx, secCookie); err != nil {
+			if err := c.RunSignForCookie(ctx, secCookie); err != nil {
 				c.cmd.Printf("[musician sign] ❌ 辅助账号签到失败: %s\n", err)
 			}
 			hasExecuted = true
@@ -377,8 +379,8 @@ func (c *Musician) executeSign(ctx context.Context) error {
 	return nil
 }
 
-// runSignForCookie 执行单个账号的音乐人日常签到
-func (c *Musician) runSignForCookie(ctx context.Context, cookieFile string) error {
+// RunSignForCookie 执行单个账号的音乐人日常签到
+func (c *Musician) RunSignForCookie(ctx context.Context, cookieFile string) error {
 	mctx, err := c.initMusicianContext(ctx, cookieFile, false)
 	if err != nil {
 		return err
@@ -406,7 +408,7 @@ func (c *Musician) executeVip(ctx context.Context) error {
 	// 1. 主账号
 	if cfg.Musician != nil && cfg.Musician.EnableMain && cfg.Accounts.Main != "" {
 		c.cmd.Printf("[musician vip] >>>>>> 开始主账号音乐人VIP进阶任务 (%s) <<<<<<\n", cfg.Accounts.Main)
-		if err := c.runVipForCookie(ctx, cfg.Accounts.Main); err != nil {
+		if err := c.RunVipForCookie(ctx, cfg.Accounts.Main); err != nil {
 			c.cmd.Printf("[musician vip] ❌ 主账号VIP任务失败: %s\n", err)
 		}
 		hasExecuted = true
@@ -422,7 +424,7 @@ func (c *Musician) executeVip(ctx context.Context) error {
 	if cfg.Musician != nil && cfg.Musician.EnableSecondaries && len(cfg.Accounts.Secondary) > 0 {
 		for _, secCookie := range cfg.Accounts.Secondary {
 			c.cmd.Printf("[musician vip] >>>>>> 开始辅助账号音乐人VIP进阶任务 (%s) <<<<<<\n", secCookie)
-			if err := c.runVipForCookie(ctx, secCookie); err != nil {
+			if err := c.RunVipForCookie(ctx, secCookie); err != nil {
 				c.cmd.Printf("[musician vip] ❌ 辅助账号VIP任务失败: %s\n", err)
 			}
 			hasExecuted = true
@@ -443,8 +445,8 @@ func (c *Musician) executeVip(ctx context.Context) error {
 	return nil
 }
 
-// runVipForCookie 执行单个账号的音乐人 VIP 进阶任务
-func (c *Musician) runVipForCookie(ctx context.Context, cookieFile string) error {
+// RunVipForCookie 执行单个账号的音乐人 VIP 进阶任务
+func (c *Musician) RunVipForCookie(ctx context.Context, cookieFile string) error {
 	mctx, err := c.initMusicianContext(ctx, cookieFile, true)
 	if err != nil {
 		return err

