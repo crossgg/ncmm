@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,11 @@ import (
 
 // 乐迷团任务默认使用的粉丝团 ID。
 const defaultFansGroupId = "1872529203038486609"
+
+var fansGroupSongIDPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:songId|songIds|trackId|resourceId)[^0-9]{0,16}([0-9]{5,})`),
+	regexp.MustCompile(`(?i)/song/([0-9]{5,})`),
+}
 
 type FansGroupOpts struct {
 	CookieFile string
@@ -182,6 +189,10 @@ func (c *FansGroup) executeForCookie(ctx context.Context, cookieFile string) err
 		}
 	}
 
+	if orig.Title != "" && !missionCompleted(orig.Status, orig.CurrentProgress, orig.AllProgress) {
+		c.doAccelerateTask(ctx, eapiCli, missions, orig)
+	}
+
 	c.cmd.Println("[fansgroup] 所有任务处理完成")
 	return nil
 }
@@ -272,25 +283,6 @@ func (c *FansGroup) doPublishNote(ctx context.Context, eapiCli *eapi.Api, boardI
 	n := NewNote(c.root, c.l)
 	cfg := c.root.Cfg.Note
 
-	var title, msg string
-	if cfg != nil {
-		if len(cfg.Titles) > 0 {
-			title = cfg.Titles[c.rng.Intn(len(cfg.Titles))]
-		}
-		if len(cfg.Messages) > 0 {
-			msg = cfg.Messages[c.rng.Intn(len(cfg.Messages))]
-		}
-	}
-	if title == "" {
-		title = "Music Share"
-	}
-	if msg == "" {
-		msg = "Share a nice song"
-	}
-	for len([]rune(msg)) < 10 {
-		msg += " more text"
-	}
-
 	var pics string
 	if cfg != nil {
 		uniqueURLs := uniqueStrings(n.resolveImageURLs(ctx, cfg.ImageURLs))
@@ -319,6 +311,7 @@ func (c *FansGroup) doPublishNote(ctx context.Context, eapiCli *eapi.Api, boardI
 	}
 
 	for i := 0; i < remaining; i++ {
+		title, msg := c.pickFansGroupNoteText(i)
 		c.cmd.Printf("  [%d/%d] 准备发布动态：%q\n", i+1, remaining, title)
 		resp, err := eapiCli.EventPublish(ctx, &eapi.EventPublishReq{
 			Title:            title,
@@ -353,6 +346,37 @@ func (c *FansGroup) doPublishNote(ctx context.Context, eapiCli *eapi.Api, boardI
 			time.Sleep(time.Duration(2+c.rng.Intn(4)) * time.Second)
 		}
 	}
+}
+
+func (c *FansGroup) pickFansGroupNoteText(index int) (string, string) {
+	cfg := c.root.Cfg.Note
+
+	var title, msg string
+	if cfg != nil {
+		if len(cfg.Titles) > 0 {
+			title = cfg.Titles[c.rng.Intn(len(cfg.Titles))]
+		}
+		if len(cfg.Messages) > 0 {
+			msg = cfg.Messages[c.rng.Intn(len(cfg.Messages))]
+		}
+	}
+	if title == "" {
+		title = "Music Share"
+	}
+	if msg == "" {
+		msg = "Share a nice song"
+	}
+	return title, withFansGroupPublishNonce(msg, index+1, time.Now().UnixNano())
+}
+
+func withFansGroupPublishNonce(msg string, index int, nonce int64) string {
+	if msg == "" {
+		msg = "Share a nice song"
+	}
+	for len([]rune(msg)) < 10 {
+		msg += " more text"
+	}
+	return fmt.Sprintf("%s\n分享编号 %d-%06d", msg, index, nonce%1000000)
 }
 
 func (c *FansGroup) doShareSong(ctx context.Context, eapiCli *eapi.Api, m eapi.FansGroupMissionItem) {
@@ -452,16 +476,94 @@ func (c *FansGroup) doLikeNotes(ctx context.Context, eapiCli *eapi.Api, fansGrou
 	c.cmd.Printf("[fansgroup] 点赞完成：%d/%d\n", success, remaining)
 }
 
-func (c *FansGroup) doAccelerateTask(ctx context.Context, eapiCli *eapi.Api, weapiCli *weapi.Api, missions *eapi.FansGroupMissionAllResp, orig eapi.FansGroupMissionOriginality) {
-	c.cmd.Printf("[fansgroup] 处理加速任务 [%s] %s...\n", orig.Title, orig.Subtitle)
+func (c *FansGroup) doCollectSong(ctx context.Context, eapiCli *eapi.Api, title string, remaining int, songIds []int64) {
+	if remaining <= 0 {
+		remaining = 1
+	}
+	songIds = uniqueInt64s(songIds)
+	if len(songIds) == 0 {
+		songIds = []int64{186016}
+		c.cmd.Printf("[fansgroup] [%s] 未解析到任务歌曲，使用默认歌曲 %d\n", title, songIds[0])
+	}
 
-	var songIds []int64
-	for _, m := range missions.Data.Normal.Data {
-		if strings.Contains(m.Title, "播放") {
-			songIds = parseSongIdsFromButton(m.Button.Url)
-			break
+	c.cmd.Printf("[fansgroup] 处理收藏任务 [%s]（剩余 %d）\n", title, remaining)
+	for i := 0; i < remaining; i++ {
+		songId := songIds[c.rng.Intn(len(songIds))]
+		if !c.collectOneSong(ctx, eapiCli, songId, i+1, remaining) {
+			continue
+		}
+		if i < remaining-1 {
+			time.Sleep(time.Duration(2+c.rng.Intn(4)) * time.Second)
 		}
 	}
+}
+
+func (c *FansGroup) collectOneSong(ctx context.Context, eapiCli *eapi.Api, songId int64, index, total int) bool {
+	songIdStr := fmt.Sprintf("%d", songId)
+	c.cmd.Printf("  [%d/%d] 准备收藏歌曲 %s\n", index, total, songIdStr)
+
+	preResp, err := eapiCli.SongLike(ctx, &eapi.SongLikeReq{
+		TrackId:    songIdStr,
+		Like:       "false",
+		Time:       "3",
+		CheckToken: "",
+	})
+	if err != nil {
+		c.cmd.Printf("  [%d/%d] 预取消收藏请求失败，继续尝试收藏: %v\n", index, total, err)
+	} else if preResp.Code == 200 {
+		c.cmd.Printf("  [%d/%d] 已先归一化为未收藏状态\n", index, total)
+	} else {
+		c.cmd.Printf("  [%d/%d] 预取消收藏返回 code=%d，继续尝试收藏\n", index, total, preResp.Code)
+	}
+
+	time.Sleep(time.Duration(1+c.rng.Intn(3)) * time.Second)
+	likeResp, err := eapiCli.SongLike(ctx, &eapi.SongLikeReq{
+		TrackId:    songIdStr,
+		Like:       "true",
+		Time:       "3",
+		CheckToken: "",
+	})
+	if err != nil {
+		c.cmd.Printf("  [%d/%d] 收藏歌曲失败: %v\n", index, total, err)
+		return false
+	}
+	if likeResp.Code != 200 {
+		c.cmd.Printf("  [%d/%d] 收藏歌曲返回异常 code=%d\n", index, total, likeResp.Code)
+		return false
+	}
+	c.cmd.Printf("  [%d/%d] 收藏歌曲成功\n", index, total)
+
+	delay := 3 + c.rng.Intn(8)
+	c.cmd.Printf("  %d 秒后取消收藏歌曲...\n", delay)
+	time.Sleep(time.Duration(delay) * time.Second)
+
+	unlikeResp, err := eapiCli.SongLike(ctx, &eapi.SongLikeReq{
+		TrackId:    songIdStr,
+		Like:       "false",
+		Time:       "3",
+		CheckToken: "",
+	})
+	if err != nil || unlikeResp.Code != 200 {
+		c.cmd.Printf("  取消收藏歌曲失败: %v\n", err)
+		return true
+	}
+	c.cmd.Println("  取消收藏歌曲成功")
+	return true
+}
+
+func (c *FansGroup) doAccelerateTask(ctx context.Context, eapiCli *eapi.Api, missions *eapi.FansGroupMissionAllResp, orig eapi.FansGroupMissionOriginality) {
+	c.cmd.Printf("[fansgroup] 处理加速任务 [%s] %s...\n", orig.Title, orig.Subtitle)
+
+	if strings.Contains(orig.Subtitle, "收藏") || strings.Contains(orig.Subtitle, "红心") {
+		songIds := parseSongIdsFromOriginality(orig)
+		if len(songIds) == 0 {
+			songIds = parseFallbackSongIdsFromMissions(missions)
+		}
+		c.doCollectSong(ctx, eapiCli, orig.Subtitle, missionRemaining(orig.CurrentProgress, orig.AllProgress), songIds)
+		return
+	}
+
+	songIds := parseFallbackSongIdsFromMissions(missions)
 	if len(songIds) == 0 {
 		c.cmd.Println("[fansgroup] 没有可用歌曲，跳过加速任务")
 		return
@@ -502,17 +604,170 @@ func (c *FansGroup) doAccelerateTask(ctx context.Context, eapiCli *eapi.Api, wea
 	}
 }
 
-// parseSongIdsFromButton 从 button.url 里的 actionMnbParams 提取 songIds。
+// parseSongIdsFromButton 从 button.url 里提取 songIds、songId、trackId 或歌曲 resourceId。
 func parseSongIdsFromButton(buttonUrl string) []int64 {
-	var btn struct {
-		ActionMnbParams struct {
-			SongIds []int64 `json:"songIds"`
-		} `json:"actionMnbParams"`
+	return parseSongIdsFromJSONText(buttonUrl)
+}
+
+func parseSongIdsFromMission(m eapi.FansGroupMissionItem) []int64 {
+	var ids []int64
+	ids = append(ids, parseSongIdsFromJSONText(m.Button.Url)...)
+	ids = append(ids, parseSongIdsFromJSONText(m.IconUi.TargetUrl)...)
+	ids = append(ids, parseSongIdsFromJSONText(m.LogInfo)...)
+	return uniqueInt64s(ids)
+}
+
+func parseSongIdsFromOriginality(orig eapi.FansGroupMissionOriginality) []int64 {
+	var ids []int64
+	ids = append(ids, parseSongIdsFromJSONText(orig.Button.Url)...)
+	ids = append(ids, parseSongIdsFromJSONText(orig.LogInfo)...)
+	if orig.MissionDetail != nil {
+		raw, _ := json.Marshal(orig.MissionDetail)
+		ids = append(ids, parseSongIdsFromJSONText(string(raw))...)
 	}
-	if err := json.Unmarshal([]byte(buttonUrl), &btn); err != nil {
+	return uniqueInt64s(ids)
+}
+
+func parseFallbackSongIdsFromMissions(missions *eapi.FansGroupMissionAllResp) []int64 {
+	if missions == nil {
 		return nil
 	}
-	return btn.ActionMnbParams.SongIds
+	var ids []int64
+	for _, m := range missions.Data.Normal.Data {
+		ids = append(ids, parseSongIdsFromMission(m)...)
+	}
+	return uniqueInt64s(ids)
+}
+
+func parseSongIdsFromJSONText(raw string) []int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	var v interface{}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		return extractSongIDsFromText(raw)
+	}
+
+	var ids []int64
+	walkSongIDs(v, &ids)
+	return uniqueInt64s(ids)
+}
+
+func walkSongIDs(v interface{}, ids *[]int64) {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		for _, key := range []string{"songIds", "songId", "trackIds", "trackId"} {
+			if value, ok := x[key]; ok {
+				appendSongIDsFromValue(value, ids)
+			}
+		}
+		if value, ok := x["resourceId"]; ok && isSongResourceType(x["resourceType"]) {
+			appendSongIDsFromValue(value, ids)
+		}
+		for _, value := range x {
+			walkSongIDs(value, ids)
+		}
+	case []interface{}:
+		for _, item := range x {
+			walkSongIDs(item, ids)
+		}
+	case string:
+		if nested := parseSongIdsFromJSONText(x); len(nested) > 0 {
+			*ids = append(*ids, nested...)
+		}
+	}
+}
+
+func appendSongIDsFromValue(v interface{}, ids *[]int64) {
+	switch x := v.(type) {
+	case json.Number:
+		if id, err := x.Int64(); err == nil && id > 0 {
+			*ids = append(*ids, id)
+		}
+	case float64:
+		if x > 0 {
+			*ids = append(*ids, int64(x))
+		}
+	case int64:
+		if x > 0 {
+			*ids = append(*ids, x)
+		}
+	case int:
+		if x > 0 {
+			*ids = append(*ids, int64(x))
+		}
+	case string:
+		s := strings.TrimSpace(x)
+		if id, err := strconv.ParseInt(s, 10, 64); err == nil && id > 0 {
+			*ids = append(*ids, id)
+			return
+		}
+		*ids = append(*ids, parseSongIdsFromJSONText(s)...)
+	case []interface{}:
+		for _, item := range x {
+			appendSongIDsFromValue(item, ids)
+		}
+	default:
+		raw, err := json.Marshal(x)
+		if err == nil {
+			*ids = append(*ids, parseSongIdsFromJSONText(string(raw))...)
+		}
+	}
+}
+
+func isSongResourceType(v interface{}) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case json.Number:
+		return x.String() == "4"
+	case float64:
+		return int64(x) == 4
+	case string:
+		x = strings.TrimSpace(strings.ToLower(x))
+		return x == "" || x == "4" || x == "song"
+	default:
+		return fmt.Sprintf("%v", x) == "4"
+	}
+}
+
+func extractSongIDsFromText(raw string) []int64 {
+	var ids []int64
+	for _, pattern := range fansGroupSongIDPatterns {
+		matches := pattern.FindAllStringSubmatch(raw, -1)
+		for _, match := range matches {
+			if len(match) < 2 {
+				continue
+			}
+			if id, err := strconv.ParseInt(match[1], 10, 64); err == nil && id > 0 {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return uniqueInt64s(ids)
+}
+
+func uniqueInt64s(values []int64) []int64 {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(values))
+	unique := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
 }
 
 // parseShareParamsFromButton 从 button.url 里的 actionCustomParams 提取 resourceId 和 resourceType。
