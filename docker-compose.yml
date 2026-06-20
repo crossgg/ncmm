@@ -13,7 +13,8 @@ services:
       - COOKIECLOUD_SERVER=http://127.0.0.1:8088
       - COOKIECLOUD_UUID=your-uuid
       - COOKIECLOUD_PASSWORD=your-password
-    # 先通过 CookieCloud 同步 Cookie，再执行任务（用 ; 分隔，登录失败也会执行 task）
+    # 每次启动先通过 CookieCloud 同步 Cookie，再执行任务
+    # 同步成功会更新 cookie.json，同步失败保留原有 cookie 继续执行
     command: >
       sh -c "ncmm login cookiecloud -u $$COOKIECLOUD_UUID -p $$COOKIECLOUD_PASSWORD -s $$COOKIECLOUD_SERVER -m ; ncmm task"
 
