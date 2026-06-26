@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -20,9 +22,48 @@ type Badger struct {
 }
 
 func New(path string) (*Badger, error) {
+	return NewWithOptions(path, 5, 1*time.Second, false)
+}
+
+func NewWithOptions(path string, maxRetries int, retryDelay time.Duration, silent bool) (*Badger, error) {
 	var opts = badger.DefaultOptions(path).WithLoggingLevel(badger.WARNING)
 	// .WithSyncWrites(false)
-	db, err := badger.Open(opts)
+	var db *badger.DB
+	var err error
+
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+
+	for i := 0; i < maxRetries; i++ {
+		db, err = badger.Open(opts)
+		if err == nil {
+			break
+		}
+
+		errStr := err.Error()
+		isLockError := strings.Contains(errStr, "lock") ||
+			strings.Contains(errStr, "resource temporarily unavailable") ||
+			strings.Contains(errStr, "process cannot access") ||
+			strings.Contains(errStr, "temporarily unavailable")
+
+		if isLockError && i < maxRetries-1 {
+			// 指数退避 + 随机抖动，避免重试风暴
+			backoff := retryDelay * time.Duration(1<<uint(i))
+			if backoff <= 0 {
+				backoff = retryDelay
+			}
+			jitter := time.Duration(rand.Int63n(int64(500 * time.Millisecond)))
+			wait := backoff + jitter
+			if !silent {
+				log.Printf("[badger] 无法获取数据库目录锁 %s (第 %d/%d 次尝试)，将在 %v 后重试... 错误原因: %v\n", path, i+1, maxRetries, wait, err)
+			}
+			time.Sleep(wait)
+			continue
+		}
+		break
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)
 	}
@@ -31,13 +72,12 @@ func New(path string) (*Badger, error) {
 		path: path,
 		db:   db,
 	}
-	go func() {
-		if err := db.RunValueLogGC(0.5); err != nil {
-			if !errors.Is(err, badger.ErrNoRewrite) {
-				log.Printf("[badger] RunValueLogGC: %s\n", err)
-			}
+	// 同步执行 Value Log GC，避免 Close() 后 goroutine 竞态
+	if err := db.RunValueLogGC(0.5); err != nil {
+		if !errors.Is(err, badger.ErrNoRewrite) {
+			log.Printf("[badger] RunValueLogGC: %s\n", err)
 		}
-	}()
+	}
 	return b, nil
 }
 

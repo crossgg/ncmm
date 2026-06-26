@@ -67,6 +67,15 @@ func (c *FansGroup) addFlags() {
 	c.cmd.Flags().StringVar(&c.opts.CookieFile, "cookie-file", "", "cookie file path")
 }
 
+func (c *FansGroup) sleepBetweenAccounts(ctx context.Context, currentAccount string) {
+	sleepSec := 5 + c.rng.Intn(16) // 5 ~ 20 秒
+	c.cmd.Printf("[fansgroup] ⏳ 账号 (%s) 任务处理完毕，为规避风控，随机等待 %d 秒后继续下一个账号...\n", currentAccount, sleepSec)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
+}
+
 func (c *FansGroup) execute(ctx context.Context) error {
 	var queue []string
 	if c.opts.CookieFile != "" {
@@ -89,12 +98,16 @@ func (c *FansGroup) execute(ctx context.Context) error {
 		return nil
 	}
 
-	for _, cookie := range queue {
+	for i, cookie := range queue {
 		c.cmd.Printf("[fansgroup] 开始处理账号 (%s)\n", cookie)
 		if err := c.ExecuteForCookie(ctx, cookie); err != nil {
 			c.cmd.Printf("[fansgroup] 账号处理失败 (%s): %v\n", cookie, err)
 		}
 		c.cmd.Println("[fansgroup] --------------------------------------------------")
+
+		if i < len(queue)-1 {
+			c.sleepBetweenAccounts(ctx, cookie)
+		}
 	}
 	return nil
 }

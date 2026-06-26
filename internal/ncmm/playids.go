@@ -43,12 +43,14 @@ type PlayIds struct {
 	cmd  *cobra.Command
 	opts PlayIdsOpts
 	l    *log.Logger
+	rng  *rand.Rand
 }
 
 func NewPlayIds(root *Root, l *log.Logger) *PlayIds {
 	c := &PlayIds{
 		root: root,
 		l:    l,
+		rng:  rand.New(rand.NewSource(time.Now().UnixNano())),
 		cmd: &cobra.Command{
 			Use:     "playids",
 			Short:   "[need login] 播放指定的歌曲 ID 列表",
@@ -261,15 +263,28 @@ func (c *PlayIds) execute(ctx context.Context) error {
 	}
 
 	// 3. 依次对账号执行播放打卡
-	for _, cookieFile := range executeQueue {
+	for i, cookieFile := range executeQueue {
 		c.log(">>>>>> 开始为账号 (%s) 执行模拟播放 <<<<<<", cookieFile)
 		if _, err := c.executeForCookie(ctx, cookieFile, uniqueIds); err != nil {
 			c.log("[ERROR] 账号 (%s) 模拟播放失败: %s", cookieFile, err)
 		}
 		c.log("--------------------------------------------------\n")
+
+		if i < len(executeQueue)-1 {
+			c.sleepBetweenAccounts(ctx, cookieFile)
+		}
 	}
 
 	return nil
+}
+
+func (c *PlayIds) sleepBetweenAccounts(ctx context.Context, currentAccount string) {
+	sleepSec := 5 + c.rng.Intn(16) // 5 ~ 20 秒
+	c.log("[playids] ⏳ 账号 (%s) 任务处理完毕，为规避风控，随机等待 %d 秒后继续下一个账号...", currentAccount, sleepSec)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
 }
 
 func (c *PlayIds) RunForCookie(ctx context.Context, cookieFile string) error {

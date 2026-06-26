@@ -23,7 +23,7 @@ log:
   # 滚动日志配置
   rotate:
     # 日志文件保存路径
-    filename: "${HOME}/.ncmm/log/ncm.log"
+    filename: "./log/ncm.log"
     # 单个日志文件最大大小 (单位: MB)
     maxsize: 100
     # 日志文件保留天数
@@ -57,7 +57,7 @@ database:
   # 缓存驱动，目前仅支持 badger
   driver: badger
   # 缓存目录路径
-  path: "${HOME}/.ncmm/database/badger/"
+  path: "./database/badger/"
 
 # playids 播放指定歌曲配置
 playids:

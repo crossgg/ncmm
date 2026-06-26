@@ -26,12 +26,14 @@ type SignIn struct {
 	cmd  *cobra.Command
 	l    *log.Logger
 	opts SignInOpts
+	rng  *rand.Rand
 }
 
 func NewSign(root *Root, l *log.Logger) *SignIn {
 	c := &SignIn{
 		root: root,
 		l:    l,
+		rng:  rand.New(rand.NewSource(time.Now().UnixNano())),
 		cmd: &cobra.Command{
 			Use:     "sign",
 			Short:   "[need login] Sign perform daily cloud shell check-in",
@@ -71,6 +73,15 @@ func (c *SignIn) Command() *cobra.Command {
 	return c.cmd
 }
 
+func (c *SignIn) sleepBetweenAccounts(ctx context.Context, currentAccount string) {
+	sleepSec := 5 + c.rng.Intn(16) // 5 ~ 20 秒
+	c.cmd.Printf("[sign] ⏳ 账号 (%s) 任务处理完毕，为规避风控，随机等待 %d 秒后继续下一个账号...\n", currentAccount, sleepSec)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
+}
+
 func (c *SignIn) execute(ctx context.Context) error {
 	if err := c.validate(); err != nil {
 		return fmt.Errorf("validate: %w", err)
@@ -81,15 +92,15 @@ func (c *SignIn) execute(ctx context.Context) error {
 		return fmt.Errorf("配置文件中缺少 accounts 账号节点")
 	}
 
-	var hasExecuted bool
-
-	// 1. 主账号一键签到
+	var activeAccounts []struct {
+		Filepath string
+		IsMain   bool
+	}
 	if cfg.Sign != nil && cfg.Sign.EnableMain && cfg.Accounts.Main != "" {
-		c.cmd.Printf("[sign] >>>>>> 开始主账号签到 (%s) <<<<<<\n", cfg.Accounts.Main)
-		if err := c.RunSignForCookie(ctx, cfg.Accounts.Main, true, nil); err != nil {
-			c.cmd.Printf("[sign] ❌ 主账号签到失败: %s\n", err)
-		}
-		hasExecuted = true
+		activeAccounts = append(activeAccounts, struct {
+			Filepath string
+			IsMain   bool
+		}{cfg.Accounts.Main, true})
 	} else {
 		if cfg.Sign != nil && !cfg.Sign.EnableMain {
 			c.cmd.Println("[sign] 提示: 主账号日常签到任务已在配置文件中关闭 (enableMain = false)")
@@ -98,14 +109,14 @@ func (c *SignIn) execute(ctx context.Context) error {
 		}
 	}
 
-	// 2. 辅助账号一键签到
 	if cfg.Sign != nil && cfg.Sign.EnableSecondaries && len(cfg.Accounts.Secondary) > 0 {
 		for _, secCookie := range cfg.Accounts.Secondary {
-			c.cmd.Printf("[sign] >>>>>> 开始辅助账号签到 (%s) <<<<<<\n", secCookie)
-			if err := c.RunSignForCookie(ctx, secCookie, false, nil); err != nil {
-				c.cmd.Printf("[sign] ❌ 辅助账号签到失败: %s\n", err)
+			if secCookie != "" {
+				activeAccounts = append(activeAccounts, struct {
+					Filepath string
+					IsMain   bool
+				}{secCookie, false})
 			}
-			hasExecuted = true
 		}
 	} else {
 		if cfg.Sign != nil && !cfg.Sign.EnableSecondaries {
@@ -115,11 +126,30 @@ func (c *SignIn) execute(ctx context.Context) error {
 		}
 	}
 
-	if !hasExecuted {
+	if len(activeAccounts) == 0 {
 		c.cmd.Println("[sign] 未启用或未配置任何账号进行日常签到，请检查 config.yaml")
-	} else {
-		c.cmd.Println("[sign] 所有日常签到及播放任务执行完毕！")
+		return nil
 	}
+
+	for i, acc := range activeAccounts {
+		if acc.IsMain {
+			c.cmd.Printf("[sign] >>>>>> 开始主账号签到 (%s) <<<<<<\n", acc.Filepath)
+			if err := c.RunSignForCookie(ctx, acc.Filepath, true, nil); err != nil {
+				c.cmd.Printf("[sign] ❌ 主账号签到失败: %s\n", err)
+			}
+		} else {
+			c.cmd.Printf("[sign] >>>>>> 开始辅助账号签到 (%s) <<<<<<\n", acc.Filepath)
+			if err := c.RunSignForCookie(ctx, acc.Filepath, false, nil); err != nil {
+				c.cmd.Printf("[sign] ❌ 辅助账号签到失败: %s\n", err)
+			}
+		}
+
+		if i < len(activeAccounts)-1 {
+			c.sleepBetweenAccounts(ctx, acc.Filepath)
+		}
+	}
+
+	c.cmd.Println("[sign] 所有日常签到及播放任务执行完毕！")
 	return nil
 }
 

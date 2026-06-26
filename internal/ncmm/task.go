@@ -6,7 +6,9 @@ package ncmm
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/3899/ncmm/pkg/log"
 
@@ -29,6 +31,7 @@ type Task struct {
 	cmd  *cobra.Command
 	l    *log.Logger
 	opts TaskOpts
+	rng  *rand.Rand
 }
 
 type Account struct {
@@ -40,6 +43,7 @@ func NewTask(root *Root, l *log.Logger) *Task {
 	c := &Task{
 		root: root,
 		l:    l,
+		rng:  rand.New(rand.NewSource(time.Now().UnixNano())),
 		cmd: &cobra.Command{
 			Use:     "task",
 			Short:   "Batch execute configured tasks",
@@ -174,7 +178,25 @@ func (c *Task) isActionEnabledForAccount(stdAction string, isMain bool) bool {
 	return false
 }
 
-func (c *Task) executeAction(ctx context.Context, stdAction string, account Account, queue []string, activeTasks map[string]bool, signRunMap map[string]bool) {
+func (c *Task) sleepBetweenTasks(ctx context.Context) {
+	sleepSec := 1 + c.rng.Intn(5) // 1 ~ 5 秒
+	c.cmd.Printf("[task] ⏳ 为规避数据库锁竞争与接口频率限制，随机等待 %d 秒后继续下一个任务...\n", sleepSec)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
+}
+
+func (c *Task) sleepBetweenAccounts(ctx context.Context, currentAccount string) {
+	sleepSec := 5 + c.rng.Intn(16) // 5 ~ 20 秒
+	c.cmd.Printf("[task] ⏳ 账号 (%s) 任务处理完毕，为规避风控，随机等待 %d 秒后继续下一个账号...\n", currentAccount, sleepSec)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
+}
+
+func (c *Task) executeAction(ctx context.Context, stdAction string, account Account, queue []string, activeTasks map[string]bool, signRunMap map[string]bool) bool {
 	isSignSubtask := false
 	signSubtasks := []string{
 		"VipTask", "Reserve", "ViewVipCenter", "LikeComment", "FollowArtist",
@@ -188,6 +210,7 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 	}
 
 	if isSignSubtask {
+		var executed bool
 		if !signRunMap[account.Filepath] {
 			allowedTasks := make(map[string]bool)
 			for _, qItem := range queue {
@@ -206,10 +229,12 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 				} else {
 					c.cmd.Printf("[task] ✅ 账号 (%s) [日常签到] 执行完毕\n", account.Filepath)
 				}
+				c.sleepBetweenTasks(ctx)
+				executed = true
 			}
 			signRunMap[account.Filepath] = true
 		}
-		return
+		return executed
 	}
 
 	if stdAction == "playids" {
@@ -220,7 +245,8 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 		} else {
 			c.cmd.Printf("[task] ✅ 账号 (%s) [播放指定歌曲] 执行完毕\n", account.Filepath)
 		}
-		return
+		c.sleepBetweenTasks(ctx)
+		return true
 	}
 
 	if stdAction == "musician-sign" {
@@ -231,7 +257,8 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 		} else {
 			c.cmd.Printf("[task] ✅ 账号 (%s) [音乐人日常签到] 执行完毕\n", account.Filepath)
 		}
-		return
+		c.sleepBetweenTasks(ctx)
+		return true
 	}
 
 	if stdAction == "musician-vip" {
@@ -242,7 +269,8 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 		} else {
 			c.cmd.Printf("[task] ✅ 账号 (%s) [音乐人VIP进阶] 执行完毕\n", account.Filepath)
 		}
-		return
+		c.sleepBetweenTasks(ctx)
+		return true
 	}
 
 	if stdAction == "note" {
@@ -253,7 +281,8 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 		} else {
 			c.cmd.Printf("[task] ✅ 账号 (%s) [发布图文动态] 执行完毕\n", account.Filepath)
 		}
-		return
+		c.sleepBetweenTasks(ctx)
+		return true
 	}
 
 	if stdAction == "fansgroup" {
@@ -264,14 +293,18 @@ func (c *Task) executeAction(ctx context.Context, stdAction string, account Acco
 		} else {
 			c.cmd.Printf("[task] ✅ 账号 (%s) [乐迷团任务] 执行完毕\n", account.Filepath)
 		}
-		return
+		c.sleepBetweenTasks(ctx)
+		return true
 	}
+	return false
 }
 
-func (c *Task) runQueue(ctx context.Context, queue []string, accounts []Account, activeTasks map[string]bool) {
+func (c *Task) runQueue(ctx context.Context, queue []string, accounts []Account, activeTasks map[string]bool) bool {
 	signRunMap := make(map[string]bool)
+	var queueExecuted bool
 
-	for _, account := range accounts {
+	for i, account := range accounts {
+		var hasExecuted bool
 		for _, action := range queue {
 			stdAction := c.standardizeActionKey(action)
 			if stdAction == "" {
@@ -286,9 +319,16 @@ func (c *Task) runQueue(ctx context.Context, queue []string, accounts []Account,
 				continue
 			}
 
-			c.executeAction(ctx, stdAction, account, queue, activeTasks, signRunMap)
+			if c.executeAction(ctx, stdAction, account, queue, activeTasks, signRunMap) {
+				hasExecuted = true
+				queueExecuted = true
+			}
+		}
+		if hasExecuted && i < len(accounts)-1 {
+			c.sleepBetweenAccounts(ctx, account.Filepath)
 		}
 	}
+	return queueExecuted
 }
 
 func (c *Task) execute(ctx context.Context) error {
@@ -318,7 +358,7 @@ func (c *Task) execute(ctx context.Context) error {
 			runNote = cfg.Task.Note
 			runFansGroup = cfg.Task.FansGroup
 		} else {
-			c.cmd.Println("[task] 提示: 配置文件中未定义 task 节点且未传递任何命令行标志，默认不执行任何任务")
+			c.cmd.Println("[task] 提示: 配置文件中未定义 task 节点且未传递 any 命令行标志，默认不执行任何任务")
 			return nil
 		}
 	}
@@ -378,17 +418,25 @@ func (c *Task) execute(ctx context.Context) error {
 			c.cmd.Printf("[task] >>>>>> [慢任务组] 执行完毕 <<<<<<\n\n")
 		}
 	} else if mode == "by-account" {
-		for _, account := range accounts {
+		for i, account := range accounts {
 			c.cmd.Printf("[task] >>>>>> 开始执行账号 (%s) <<<<<<\n", account.Filepath)
+			var hasExecuted bool
 			if runFast {
 				c.cmd.Println("  --- [快任务组] ---")
-				c.runQueue(ctx, fastQueue, []Account{account}, activeTasks)
+				if c.runQueue(ctx, fastQueue, []Account{account}, activeTasks) {
+					hasExecuted = true
+				}
 			}
 			if runSlow {
 				c.cmd.Println("  --- [慢任务组] ---")
-				c.runQueue(ctx, slowQueue, []Account{account}, activeTasks)
+				if c.runQueue(ctx, slowQueue, []Account{account}, activeTasks) {
+					hasExecuted = true
+				}
 			}
 			c.cmd.Printf("[task] >>>>>> 账号 (%s) 执行完毕 <<<<<<\n\n", account.Filepath)
+			if hasExecuted && i < len(accounts)-1 {
+				c.sleepBetweenAccounts(ctx, account.Filepath)
+			}
 		}
 	} else {
 		return fmt.Errorf("未知的任务执行模式: %s，仅支持 by-task-group 和 by-account", mode)

@@ -26,13 +26,17 @@ type Config struct {
 }
 
 func New(cfg *Config) (Database, error) {
+	return NewWithOptions(cfg, 5, 1*time.Second, false)
+}
+
+func NewWithOptions(cfg *Config, maxRetries int, retryDelay time.Duration, silent bool) (Database, error) {
 	var (
 		db  Database
 		err error
 	)
 	switch cfg.Driver {
 	case "", "badger":
-		db, err = badger.New(cfg.Path)
+		db, err = badger.NewWithOptions(cfg.Path, maxRetries, retryDelay, silent)
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
 	}

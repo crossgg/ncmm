@@ -17,156 +17,178 @@ import (
 	"github.com/3899/ncmm/api/weapi"
 )
 
+func (c *SignIn) isPlayDailyRecommendTask(taskName string) bool {
+	switch taskName {
+	case "听歌30分钟", "听歌", "每日推荐", "听推荐歌曲", "听推荐歌单中的歌", "听音乐30分钟":
+		return true
+	}
+	return false
+}
+
+func (c *SignIn) isYunbeiTaskEnabled(taskName string, allowedTasks map[string]bool) bool {
+	cfg := c.root.Cfg.Sign.YunbeiTask
+	if cfg == nil {
+		return false
+	}
+	switch taskName {
+	case "浏览会员中心":
+		return allowedTasks["ViewVipCenter"] && cfg.EnableViewVipCenter
+	case "点赞评论、动态", "点赞":
+		return allowedTasks["LikeComment"] && cfg.EnableLikeComment
+	case "探索小众歌曲":
+		return allowedTasks["ListenIndie"] && cfg.EnableListenIndie
+	case "关注歌手":
+		return allowedTasks["FollowArtist"] && cfg.EnableFollowArtist
+	case "收藏":
+		return allowedTasks["CollectSong"] && cfg.EnableCollectSong
+	case "红心歌曲", "红心":
+		return allowedTasks["LikeSong"] && cfg.EnableLikeSong
+	case "发布动态", "分享动态", "发布图文", "发布图文动态", "发布笔记", "分享图文", "发布图文笔记":
+		return allowedTasks["PublishNote"] && cfg.EnablePublishNote
+	case "听歌30分钟", "听歌", "每日推荐", "听推荐歌曲", "听推荐歌单中的歌", "听音乐30分钟":
+		return allowedTasks["PlayDailyRecommend"] && cfg.EnablePlayDailyRecommend
+	}
+	return false
+}
+
+func (c *SignIn) executeSingleYunbeiTask(ctx context.Context, eapiRequest *eapi.Api, request *weapi.Api, v eapi.YunBeiTaskTodoRespData, allowedTasks map[string]bool, cookieFile string, userId int64) {
+	switch v.TaskName {
+	case "浏览会员中心":
+		c.cmd.Println("  👉 开始执行 [浏览会员中心] 任务...")
+		c.doViewVipCenter(ctx, eapiRequest)
+	case "点赞评论、动态", "点赞":
+		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [点赞评论] 开关控制)...\n", v.TaskName)
+		c.doLikeComments(ctx, request)
+	case "探索小众歌曲":
+		c.cmd.Println("  👉 开始执行 [探索小众歌曲] 听歌任务...")
+		c.doListenIndie(ctx, eapiRequest, request)
+	case "关注歌手":
+		c.cmd.Println("  👉 开始执行 [关注歌手] 任务...")
+		c.doFollowArtist(ctx, eapiRequest)
+	case "收藏":
+		c.cmd.Println("  👉 开始执行 [收藏] 任务 (使用 [收藏歌曲] 开关控制)...")
+		c.doCollectSong(ctx, request, userId)
+	case "红心歌曲", "红心":
+		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [红心歌曲] 开关控制)...\n", v.TaskName)
+		c.doLikeSong(ctx, eapiRequest)
+	case "发布动态", "分享动态", "发布图文", "发布图文动态", "发布笔记", "分享图文", "发布图文笔记":
+		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [发布动态] 开关控制)...\n", v.TaskName)
+		c.doPublishNote(ctx, cookieFile)
+	}
+}
+
+func (c *SignIn) sleepBetweenSubtasks(ctx context.Context, taskName string) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	sleepSec := 1 + r.Intn(5) // 1 ~ 5 秒
+	c.cmd.Printf("  ⏳ 子任务 [%s] 执行完毕，随机等待 %d 秒后继续下一个子任务...\n", taskName, sleepSec)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
+}
+
 func (c *SignIn) handleYunbeiTasks(ctx context.Context, cli *api.Client, request *weapi.Api, userId int64, cookieFile string, allowedTasks map[string]bool) {
 	eapiRequest := eapi.New(cli)
-	// 1. 获取当前待做任务列表 (作为执行云贝签到任务的前置动作)
-	task, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
-	if err != nil || task.Code != 200 {
-		c.cmd.Printf("  ❌ 获取云贝任务列表失败: %v\n", err)
-		return
-	}
 
-	c.cmd.Println("  👉 成功获取云贝任务列表:")
-	for _, v := range task.Data {
-		statusStr := "已完成"
-		if !v.Completed {
-			statusStr = "未完成"
-		}
-		c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d 云贝\n", v.TaskName, statusStr, v.TaskPoint)
-	}
-
-	// 2. 预约领云贝 (特殊板块)
+	// 1. 预约领云贝 (特殊板块，独立于日常任务列表，运行一次即可)
 	if allowedTasks["Reserve"] {
 		c.handleReserveYunbei(ctx, eapiRequest)
 	}
 
-	// 3. 筛选并执行未完成的任务
-	var playDailyRecommendTaskName string
-	for _, v := range task.Data {
-		if v.Completed {
-			continue
+	// 2. 双轮循环执行任务并领奖
+	for round := 1; round <= 2; round++ {
+		c.cmd.Printf("  👉 [云贝任务第 %d/2 轮] 获取待做任务列表...\n", round)
+		task, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
+		if err != nil || task.Code != 200 {
+			c.cmd.Printf("  ❌ 获取云贝任务列表失败: %v\n", err)
+			return
 		}
 
-		switch v.TaskName {
-		case "浏览会员中心":
-			if allowedTasks["ViewVipCenter"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableViewVipCenter {
-					c.cmd.Println("  👉 开始执行 [浏览会员中心] 任务...")
-					c.doViewVipCenter(ctx, eapiRequest)
-				} else {
-					c.cmd.Println("  提示: 浏览会员中心任务已在配置文件中关闭(enableViewVipCenter = false)，跳过执行")
-				}
-			}
-		case "点赞评论、动态", "点赞":
-			if allowedTasks["LikeComment"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableLikeComment {
-					c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [点赞评论] 开关控制)...\n", v.TaskName)
-					c.doLikeComments(ctx, request)
-				} else {
-					c.cmd.Println("  提示: 点赞评论任务已在配置文件中关闭(enableLikeComment = false)，跳过执行")
-				}
-			}
-		case "探索小众歌曲":
-			if allowedTasks["ListenIndie"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableListenIndie {
-					c.cmd.Println("  👉 开始执行 [探索小众歌曲] 听歌任务...")
-					c.doListenIndie(ctx, eapiRequest, request)
-				} else {
-					c.cmd.Println("  提示: 小众歌曲任务已在配置文件中关闭(enableListenIndie = false)，跳过执行")
-				}
-			}
-		case "关注歌手":
-			if allowedTasks["FollowArtist"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableFollowArtist {
-					c.cmd.Println("  👉 开始执行 [关注歌手] 任务...")
-					c.doFollowArtist(ctx, eapiRequest)
-				} else {
-					c.cmd.Println("  提示: 关注歌手任务已在配置文件中关闭(enableFollowArtist = false)，跳过执行")
-				}
-			}
-		case "收藏":
-			if allowedTasks["CollectSong"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableCollectSong {
-					c.cmd.Println("  👉 开始执行 [收藏] 任务 (使用 [收藏歌曲] 开关控制)...")
-					c.doCollectSong(ctx, request, userId)
-				} else {
-					c.cmd.Println("  提示: 收藏歌曲任务已在配置文件中关闭(enableCollectSong = false)，跳过执行")
-				}
-			}
-		case "红心歌曲", "红心":
-			if allowedTasks["LikeSong"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnableLikeSong {
-					c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [红心歌曲] 开关控制)...\n", v.TaskName)
-					c.doLikeSong(ctx, eapiRequest)
-				} else {
-					c.cmd.Println("  提示: 红心歌曲任务已在配置文件中关闭(enableLikeSong = false)，跳过执行")
-				}
-			}
-		case "发布动态", "分享动态", "发布图文", "发布图文动态", "发布笔记", "分享图文", "发布图文笔记":
-			if allowedTasks["PublishNote"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnablePublishNote {
-					c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [发布动态] 开关控制)...\n", v.TaskName)
-					c.doPublishNote(ctx, cookieFile)
-				} else {
-					c.cmd.Println("  提示: 发布动态任务已在配置文件中关闭(enablePublishNote = false)，跳过执行")
-				}
-			}
-		case "听歌30分钟", "听歌", "每日推荐", "听推荐歌曲", "听推荐歌单中的歌", "听音乐30分钟":
-			if allowedTasks["PlayDailyRecommend"] {
-				if c.root.Cfg.Sign.YunbeiTask != nil && c.root.Cfg.Sign.YunbeiTask.EnablePlayDailyRecommend {
-					playDailyRecommendTaskName = v.TaskName
-				} else {
-					c.cmd.Println("  提示: 播放日推任务已在配置文件中关闭(enablePlayDailyRecommend = false)，跳过执行")
-				}
-			}
-		}
-	}
-
-	// 4. 执行日推播放任务 (前台串行，作为当前账号最后一个任务执行)
-	if playDailyRecommendTaskName != "" && allowedTasks["PlayDailyRecommend"] {
-		c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [播放日推] 开关控制)...\n", playDailyRecommendTaskName)
-		c.doPlayDailyRecommend(ctx, cookieFile, playDailyRecommendTaskName)
-	}
-
-	// 5. 重新获取任务列表以获取最新的 userTaskId 和 depositCode 以供完成领奖
-	c.cmd.Println("  👉 重新获取任务列表并领取奖励...")
-	refreshedTask, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
-	if err == nil && refreshedTask.Code == 200 {
-		var claimedCount int
-		for _, v := range refreshedTask.Data {
-			if !v.Completed {
+		// 筛选待做且启用的任务
+		var todoTasks []eapi.YunBeiTaskTodoRespData
+		var playDailyRecommendTaskName string
+		for _, v := range task.Data {
+			if v.Completed {
 				continue
 			}
-			reply, err := request.YunBeiTaskFinish(ctx, &weapi.YunBeiTaskFinishReq{
-				Period:      fmt.Sprintf("%d", v.Period),
-				UserTaskId:  fmt.Sprintf("%d", v.UserTaskId),
-				DepositCode: fmt.Sprintf("%d", v.DepositCode),
-			})
-			if err == nil && reply.Code == 200 {
-				c.cmd.Printf("  🎉 成功领取云贝 [%s] 任务奖励，获得云贝: %v\n", v.TaskName, v.TaskPoint)
-				claimedCount++
+			if !c.isYunbeiTaskEnabled(v.TaskName, allowedTasks) {
+				continue
 			}
-		}
-		if claimedCount == 0 {
-			c.cmd.Println("  ℹ️ 没有可领取的任务奖励")
+			if c.isPlayDailyRecommendTask(v.TaskName) {
+				playDailyRecommendTaskName = v.TaskName
+				continue
+			}
+			todoTasks = append(todoTasks, v)
 		}
 
-		// 6. 领奖后再次获取任务列表并打印最终状态
-		finalTask, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
-		if err == nil && finalTask.Code == 200 {
-			c.cmd.Println("  👉 领奖后最终的任务列表:")
-			for _, v := range finalTask.Data {
-				statusStr := "已完成"
+		// 若本轮没有需要做的任务，提前终止循环
+		if len(todoTasks) == 0 && playDailyRecommendTaskName == "" {
+			c.cmd.Printf("  ℹ️ [云贝任务第 %d/2 轮] 无待执行的未完成任务，退出循环\n", round)
+			break
+		}
+
+		c.cmd.Printf("  👉 [云贝任务第 %d/2 轮] 成功拉取到待完成任务:\n", round)
+		for _, v := range todoTasks {
+			c.cmd.Printf("    - 任务: %-15s | 奖励: %d 云贝\n", v.TaskName, v.TaskPoint)
+		}
+		if playDailyRecommendTaskName != "" {
+			c.cmd.Printf("    - 任务: %-15s | 奖励: 听歌奖励 (将在本轮常规任务后执行)\n", playDailyRecommendTaskName)
+		}
+
+		// 执行常规任务
+		for i, v := range todoTasks {
+			c.executeSingleYunbeiTask(ctx, eapiRequest, request, v, allowedTasks, cookieFile, userId)
+			if i < len(todoTasks)-1 || playDailyRecommendTaskName != "" {
+				c.sleepBetweenSubtasks(ctx, v.TaskName)
+			}
+		}
+
+		// 执行日推播放任务 (前台串行，作为当前轮次的最后一个任务执行)
+		if playDailyRecommendTaskName != "" {
+			c.cmd.Printf("  👉 开始执行 [%s] 任务 (使用 [播放日推] 开关控制)...\n", playDailyRecommendTaskName)
+			c.doPlayDailyRecommend(ctx, cookieFile, playDailyRecommendTaskName)
+		}
+
+		// 重新拉取任务列表，对本轮已完成的任务进行领奖
+		c.cmd.Println("  👉 重新获取任务列表并领取奖励...")
+		refreshedTask, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
+		if err == nil && refreshedTask.Code == 200 {
+			var claimedCount int
+			for _, v := range refreshedTask.Data {
 				if !v.Completed {
-					statusStr = "未完成"
+					continue
 				}
-				c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d 云贝\n", v.TaskName, statusStr, v.TaskPoint)
+				reply, err := request.YunBeiTaskFinish(ctx, &weapi.YunBeiTaskFinishReq{
+					Period:      fmt.Sprintf("%d", v.Period),
+					UserTaskId:  fmt.Sprintf("%d", v.UserTaskId),
+					DepositCode: fmt.Sprintf("%d", v.DepositCode),
+				})
+				if err == nil && reply.Code == 200 {
+					c.cmd.Printf("  🎉 成功领取云贝 [%s] 任务奖励，获得云贝: %v\n", v.TaskName, v.TaskPoint)
+					claimedCount++
+				}
+			}
+			if claimedCount == 0 {
+				c.cmd.Println("  ℹ️ 没有可领取的任务奖励")
 			}
 		} else {
-			c.cmd.Printf("  ❌ 领奖后获取任务列表失败: %v\n", err)
+			c.cmd.Printf("  ❌ 重新拉取任务列表失败: %v\n", err)
+		}
+	}
+
+	// 最终状态展示
+	finalTask, err := eapiRequest.YunBeiTaskTodo(ctx, &eapi.YunBeiTaskTodoReq{})
+	if err == nil && finalTask.Code == 200 {
+		c.cmd.Println("  👉 最终的云贝任务列表状态:")
+		for _, v := range finalTask.Data {
+			statusStr := "已完成"
+			if !v.Completed {
+				statusStr = "未完成"
+			}
+			c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d 云贝\n", v.TaskName, statusStr, v.TaskPoint)
 		}
 	} else {
-		c.cmd.Printf("  ❌ 重新拉取任务列表失败: %v\n", err)
+		c.cmd.Printf("  ❌ 获取最终任务状态列表失败: %v\n", err)
 	}
 }
 

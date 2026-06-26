@@ -219,6 +219,41 @@ func (c *SignIn) executeVipSign(ctx context.Context, request *eapi.Api, deviceId
 	return false
 }
 
+func (c *SignIn) executeSingleVipTask(ctx context.Context, cli *api.Client, request *weapi.Api, eapiRequest *eapi.Api, v eapi.VipTaskListData, deviceId string, userLevel int64, likedSongIds *[]string) {
+	if v.MissionCode == "HXSSG" || strings.Contains(v.MainTitle, "红心3首") {
+		c.cmd.Println("  👉 开始执行 [红心3首VIP单曲]...")
+		ids := c.doVipSongLike(ctx, request, eapiRequest)
+		if len(ids) > 0 && likedSongIds != nil {
+			*likedSongIds = append(*likedSongIds, ids...)
+		}
+	}
+
+	if v.MissionCode == "MRGSSVIPGQ" || strings.Contains(v.MainTitle, "听3首VIP") || strings.Contains(v.MainTitle, "听3首会员") {
+		c.cmd.Println("  👉 开始执行 [每日听3首VIP歌曲]...")
+		c.doVipSongListen(ctx, request, eapiRequest, deviceId)
+	}
+
+	if strings.Contains(v.MainTitle, "调音") {
+		c.cmd.Println("  👉 开始执行 [查看AI调音大师]...")
+		c.doVipSimulateBrowse(ctx, cli, request, v.JumpUrl, 16, 20, "查看AI调音大师")
+	}
+
+	if strings.Contains(v.MainTitle, "云贝") {
+		c.cmd.Println("  👉 开始执行 [浏览云贝中心]...")
+		c.doVipSimulateBrowse(ctx, cli, request, v.JumpUrl, 16, 20, "浏览云贝中心")
+	}
+
+	if strings.Contains(v.MainTitle, "分享") {
+		c.cmd.Println("  👉 开始执行 [分享单曲到站外]...")
+		c.doVipSimulateBrowse(ctx, cli, request, v.JumpUrl, 3, 5, "分享单曲到站外")
+	}
+
+	if v.MissionCode == "FLQ" || strings.Contains(v.MainTitle, "领福利") {
+		c.cmd.Println("  👉 开始执行 [免费领福利]...")
+		c.doVipWelfareClaim(ctx, request, eapiRequest, userLevel)
+	}
+}
+
 func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *weapi.Api, userLevel int64) {
 	enableVipTask := true
 	if c.root.Cfg.Sign != nil && c.root.Cfg.Sign.EnableVipTask != nil {
@@ -263,148 +298,121 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 	} else {
 		c.cmd.Printf("  ⚠️ 获取黑胶成长值现状失败: %v\n", err)
 	}
-	// 1. 获取任务列表 (前置对照)
-	c.cmd.Println("  👉 获取黑胶 VIP 任务列表...")
-	taskList, err := eapiRequest.VipTaskList(ctx, newVipTaskListReq(deviceId))
-	if err != nil || taskList.Code != 200 {
-		c.cmd.Printf("  ❌ 获取黑胶 VIP 任务列表失败: %v\n", err)
-		return
-	}
-	var signVerifyReason string
-	if !signedToday {
-		if ok, reason := getVipSignCompleted(ctx, eapiRequest, deviceId, taskList.Data); ok {
-			signedToday = true
-			signVerifyReason = reason
-		}
-	}
 
-	c.cmd.Println("  👉 黑胶 VIP 任务列表 (执行前):")
-	for _, v := range taskList.Data {
-		statusStr := "未完成"
-		if v.Status == 100 {
-			statusStr = "已完成"
+	for round := 1; round <= 2; round++ {
+		c.cmd.Printf("  👉 [黑胶任务第 %d/2 轮] 获取黑胶 VIP 任务列表...\n", round)
+		taskList, err := eapiRequest.VipTaskList(ctx, newVipTaskListReq(deviceId))
+		if err != nil || taskList.Code != 200 {
+			c.cmd.Printf("  ❌ 获取黑胶 VIP 任务列表失败: %v\n", err)
+			return
 		}
-		if isVipSignTask(v) {
-			if signedToday {
-				statusStr = "已完成"
-			} else {
-				statusStr = "未完成"
+
+		var signVerifyReason string
+		if !signedToday {
+			if ok, reason := getVipSignCompleted(ctx, eapiRequest, deviceId, taskList.Data); ok {
+				signedToday = true
+				signVerifyReason = reason
 			}
 		}
-		worth := v.Worth
-		if worth == 0 && isVipSignTask(v) {
-			worth = 3
-		}
-		c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d成长值\n", v.MainTitle, statusStr, worth)
-	}
-	if signVerifyReason != "" {
-		c.cmd.Printf("  ✅ 乐签状态验证通过: %s\n", signVerifyReason)
-	}
 
-	// 2. 自动做任务
-	var hasVipSignTask bool
-	for _, v := range taskList.Data {
-		// 强行前置拦截打卡任务 (名称模糊匹配以防服务端文案变化)
-		if isVipSignTask(v) {
-			hasVipSignTask = true
-			if signedToday {
-				c.cmd.Println("  ℹ️ 黑胶乐签打卡今日已完成 (跳过)")
+		// 筛选待做任务
+		var todoTasks []eapi.VipTaskListData
+		var hasVipSignTask bool
+		for _, v := range taskList.Data {
+			if isVipSignTask(v) {
+				hasVipSignTask = true
+				if !signedToday {
+					todoTasks = append(todoTasks, v)
+				}
 				continue
 			}
-			if isVipSignTaskDone(v) {
-				c.cmd.Println("  ⚠️ 任务中心声称黑胶乐签已打卡，但 sign/info 未落库，继续强制执行打卡")
+			if v.Status != 100 {
+				todoTasks = append(todoTasks, v)
 			}
+		}
 
-			c.cmd.Println("  👉 开始执行 [黑胶乐签打卡]...")
-			signedToday = c.executeVipSign(ctx, eapiRequest, deviceId)
-			if signedToday && beforeTodayScore >= 0 {
-				if growth, err := getVipGrowthState(ctx, eapiRequest, deviceId); err == nil && growth.TodayScore != beforeTodayScore {
-					c.cmd.Printf("  👉 黑胶今日成长值变化: %d -> %d\n", beforeTodayScore, growth.TodayScore)
+		// 若无待做任务且已经签到（或者压根没有签到任务），提前终止循环
+		if len(todoTasks) == 0 && (signedToday || !hasVipSignTask) {
+			c.cmd.Printf("  ℹ️ [黑胶任务第 %d/2 轮] 无待执行的未完成任务，退出循环\n", round)
+			break
+		}
+
+		c.cmd.Printf("  👉 [黑胶任务第 %d/2 轮] 待完成任务列表:\n", round)
+		for _, v := range todoTasks {
+			worth := v.Worth
+			if worth == 0 && isVipSignTask(v) {
+				worth = 3
+			}
+			c.cmd.Printf("    - 任务: %-15s | 奖励: %d成长值\n", v.MainTitle, worth)
+		}
+		if signVerifyReason != "" {
+			c.cmd.Printf("  ✅ 乐签状态验证通过: %s\n", signVerifyReason)
+		}
+
+		// 执行待做任务
+		for i, v := range todoTasks {
+			if isVipSignTask(v) {
+				c.cmd.Println("  👉 开始执行 [黑胶乐签打卡]...")
+				signedToday = c.executeVipSign(ctx, eapiRequest, deviceId)
+				if signedToday && beforeTodayScore >= 0 {
+					if growth, err := getVipGrowthState(ctx, eapiRequest, deviceId); err == nil && growth.TodayScore != beforeTodayScore {
+						c.cmd.Printf("  👉 黑胶今日成长值变化: %d -> %d\n", beforeTodayScore, growth.TodayScore)
+					}
 				}
+				if !signedToday {
+					c.cmd.Println("  ❌ 签到验证失败: 未找到今日有效的签到记录 (今日可能仍未成功打卡)")
+				}
+			} else {
+				// 其他常规任务
+				c.executeSingleVipTask(ctx, cli, request, eapiRequest, v, deviceId, userLevel, &likedSongIds)
 			}
+			if i < len(todoTasks)-1 {
+				c.sleepBetweenSubtasks(ctx, v.MainTitle)
+			}
+		}
 
+		// 兜底签到逻辑
+		if !hasVipSignTask && !signedToday {
+			c.cmd.Println("  ⚠️ 任务列表未返回黑胶乐签条目，但 sign/info 显示今日未落库，直接执行黑胶乐签打卡")
+			signedToday = c.executeVipSign(ctx, eapiRequest, deviceId)
 			if !signedToday {
 				c.cmd.Println("  ❌ 签到验证失败: 未找到今日有效的签到记录 (今日可能仍未成功打卡)")
 			}
-			continue
 		}
 
-		if v.Status == 100 {
-			continue
-		}
-
-		if v.MissionCode == "HXSSG" || strings.Contains(v.MainTitle, "红心3首") {
-			c.cmd.Println("  👉 开始执行 [红心3首VIP单曲]...")
-			likedSongIds = c.doVipSongLike(ctx, request, eapiRequest)
-		}
-
-		if v.MissionCode == "MRGSSVIPGQ" || strings.Contains(v.MainTitle, "听3首VIP") || strings.Contains(v.MainTitle, "听3首会员") {
-			c.cmd.Println("  👉 开始执行 [每日听3首VIP歌曲]...")
-			c.doVipSongListen(ctx, request, eapiRequest, deviceId)
-		}
-
-		if strings.Contains(v.MainTitle, "调音") {
-			c.cmd.Println("  👉 开始执行 [查看AI调音大师]...")
-			c.doVipSimulateBrowse(ctx, cli, request, v.JumpUrl, 16, 20, "查看AI调音大师")
-		}
-
-		if strings.Contains(v.MainTitle, "云贝") {
-			c.cmd.Println("  👉 开始执行 [浏览云贝中心]...")
-			c.doVipSimulateBrowse(ctx, cli, request, v.JumpUrl, 16, 20, "浏览云贝中心")
-		}
-
-		if strings.Contains(v.MainTitle, "分享") {
-			c.cmd.Println("  👉 开始执行 [分享单曲到站外]...")
-			c.doVipSimulateBrowse(ctx, cli, request, v.JumpUrl, 3, 5, "分享单曲到站外")
-		}
-
-		if v.MissionCode == "FLQ" || strings.Contains(v.MainTitle, "领福利") {
-			c.cmd.Println("  👉 开始执行 [免费领福利]...")
-			c.doVipWelfareClaim(ctx, request, eapiRequest, userLevel)
-		}
-	}
-	if !hasVipSignTask && !signedToday {
-		c.cmd.Println("  ⚠️ 任务列表未返回黑胶乐签条目，但 sign/info 显示今日未落库，直接执行黑胶乐签打卡")
-		signedToday = c.executeVipSign(ctx, eapiRequest, deviceId)
-		if !signedToday {
-			c.cmd.Println("  ❌ 签到验证失败: 未找到今日有效的签到记录 (今日可能仍未成功打卡)")
-		}
-	}
-
-	// 3. 一键领取所有已完成的成长值
-	if c.isAutomatic() {
-		c.cmd.Println("  👉 正在一键领取所有黑胶 VIP 成长值...")
-		eapiReward, err := eapiRequest.VipRewardGetAll(ctx, &eapi.VipRewardGetAllReq{
-			DeviceId: deviceId,
-			OS:       "iOS",
-			VerifyId: 1,
-			Header:   struct{}{},
-			ER:       true,
-		})
-		if err == nil && eapiReward.Code == 200 && eapiReward.Data.Result {
-			c.cmd.Println("  ✅ 成功领取所有黑胶 VIP 成长值 (EAPI)")
-		} else {
-			// EAPI 失败时，回退到 weapi 版
-			weapiReward, err := request.VipRewardGetAll(ctx, &weapi.VipRewardGetAllReq{})
-			if err == nil && weapiReward.Data.Result {
-				c.cmd.Println("  ✅ 成功领取所有黑胶 VIP 成长值 (WEAPI)")
+		// 一键领取所有已完成的成长值
+		if c.isAutomatic() {
+			c.cmd.Println("  👉 正在一键领取所有黑胶 VIP 成长值...")
+			eapiReward, err := eapiRequest.VipRewardGetAll(ctx, &eapi.VipRewardGetAllReq{
+				DeviceId: deviceId,
+				OS:       "iOS",
+				VerifyId: 1,
+				Header:   struct{}{},
+				ER:       true,
+			})
+			if err == nil && eapiReward.Code == 200 && eapiReward.Data.Result {
+				c.cmd.Println("  ✅ 成功领取所有黑胶 VIP 成长值 (EAPI)")
 			} else {
-				c.cmd.Printf("  ⚠️ 一键领取成长值结果不明确，可能有部分已领取或需手动核对。EAPI: %v, WEAPI: %v\n", err, err)
+				// EAPI 失败时，回退到 weapi 版
+				weapiReward, err := request.VipRewardGetAll(ctx, &weapi.VipRewardGetAllReq{})
+				if err == nil && weapiReward.Data.Result {
+					c.cmd.Println("  ✅ 成功领取所有黑胶 VIP 成长值 (WEAPI)")
+				} else {
+					c.cmd.Printf("  ⚠️ 一键领取成长值结果不明确，可能有部分已领取或需手动核对。EAPI: %v, WEAPI: %v\n", err, err)
+				}
 			}
 		}
 	}
 
-	// 4. 获取任务列表 (后置对照)
-	c.cmd.Println("  👉 获取黑胶 VIP 任务列表...")
+	// 最终状态拉取与比对展示
 	finalList, err := eapiRequest.VipTaskList(ctx, newVipTaskListReq(deviceId))
 	if err == nil && finalList.Code == 200 {
-		c.cmd.Println("  👉 黑胶 VIP 任务列表 (执行后):")
+		c.cmd.Println("  👉 最终的黑胶 VIP 任务列表状态:")
 		for _, v := range finalList.Data {
 			statusStr := "未完成"
 			if v.Status == 100 {
 				statusStr = "已完成"
 			}
-			// 黑胶乐签仍只认 sign/info 的真实落库状态。
 			if isVipSignTask(v) {
 				if signedToday {
 					statusStr = "已完成"
@@ -417,15 +425,12 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 				worth = 3
 			}
 			c.cmd.Printf("    - 任务: %-15s | 状态: %-6s | 奖励: %d成长值\n", v.MainTitle, statusStr, worth)
-			if isVipSignTask(v) && !signedToday && isVipSignTaskDone(v) {
-				c.cmd.Println("      ⚠️ 任务中心仍返回已打卡，但 sign/info 未落库，最终仍按未完成处理")
-			}
 		}
 	} else {
 		c.cmd.Printf("  ❌ 无法获取最终对照任务列表: %v\n", err)
 	}
 
-	// 4.5. 再次获取并展示今日乐签和成长值状态以作对比
+	// 再次获取并展示今日乐签和成长值状态以作对比
 	c.cmd.Println("  👉 获取执行后黑胶 VIP 状态以作对比...")
 	if finalGrowth, err := getVipGrowthState(ctx, eapiRequest, deviceId); err == nil {
 		c.cmd.Printf("  👉 [执行后] 黑胶成长值最终状态: 今日已获得 %d，当前成长值 %d\n", finalGrowth.TodayScore, finalGrowth.GrowthPoint)
@@ -440,7 +445,7 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 		c.cmd.Printf("  ⚠️ 获取黑胶乐签最终记录失败: %v\n", err)
 	}
 
-	// 5. 统一取消红心，避免干扰用户歌单
+	// 统一取消红心，避免干扰用户歌单
 	if len(likedSongIds) > 0 {
 		c.cmd.Printf("  👉 统一取消 %d 首热门 VIP 歌曲的红心，彻底恢复用户歌单...\n", len(likedSongIds))
 		for _, songIdStr := range likedSongIds {
@@ -450,7 +455,7 @@ func (c *SignIn) handleVipTasks(ctx context.Context, cli *api.Client, request *w
 				Time:       "3",
 				CheckToken: "",
 			})
-			sleepSec := 1 + rand.Intn(3) // 1 ~ 3 秒
+			sleepSec := 1 + rand.Intn(3)
 			time.Sleep(time.Duration(sleepSec) * time.Second)
 		}
 		c.cmd.Println("  ✅ 统一取消红心完成")

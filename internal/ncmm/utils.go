@@ -217,7 +217,7 @@ func syncSessionConfig(ctx context.Context, cli *api.Client, sessId string, user
 	var activeDb = db
 	var isTempDb bool
 	if activeDb == nil && dbCfg != nil {
-		if tempDb, err := database.New(dbCfg); err == nil {
+		if tempDb, err := database.NewWithOptions(dbCfg, 1, 0, true); err == nil {
 			activeDb = tempDb
 			isTempDb = true
 		}

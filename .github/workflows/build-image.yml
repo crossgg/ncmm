@@ -2,8 +2,8 @@ name: Build Docker Image
 
 on:
   push:
-    branches:
-      - main
+    # branches:
+    #   - main
     tags:
       - 'v*'
   workflow_dispatch:

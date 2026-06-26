@@ -97,6 +97,9 @@ func musicianRewardClaimCacheKey(cookieFile string, userMissionId, period int64)
 // checkMusicianIdentityCache 检查本地缓存的音乐人身份状态
 // 返回: (isMusician, cacheHit, error)
 func (c *Musician) checkMusicianIdentityCache(ctx context.Context, db database.Database, cookieFile string) (bool, bool, error) {
+	if db == nil {
+		return false, false, nil
+	}
 	cacheDays := c.root.Cfg.Musician.IdentityCacheDays
 
 	// -1 = 关闭缓存，始终走 API
@@ -116,6 +119,9 @@ func (c *Musician) checkMusicianIdentityCache(ctx context.Context, db database.D
 
 // saveMusicianIdentityCache 保存音乐人身份状态到本地缓存
 func (c *Musician) saveMusicianIdentityCache(ctx context.Context, db database.Database, cookieFile string, isMusician bool) {
+	if db == nil {
+		return
+	}
 	cacheDays := c.root.Cfg.Musician.IdentityCacheDays
 	if cacheDays != nil && *cacheDays == -1 {
 		return // 缓存已关闭
@@ -165,11 +171,11 @@ func (c *Musician) initMusicianContext(ctx context.Context, cookieFile string, n
 		return nil, fmt.Errorf("实例化客户端失败: %w", err)
 	}
 
-	// 初始化数据库。音乐人身份缓存是风控前置条件，数据库不可用时不继续执行音乐人接口。
-	db, err := database.New(c.root.Cfg.Database)
+	// 初始化数据库（可选）。音乐人身份缓存是风控辅助缓存，如果数据库被占用，则自动跳过缓存直接通过 API 交互。
+	db, err := database.NewWithOptions(c.root.Cfg.Database, 1, 0, true)
 	if err != nil {
-		cli.Close(ctx)
-		return nil, fmt.Errorf("本地数据库初始化失败: %w", err)
+		c.cmd.Println("    ⚠️  本地数据库已被其他进程占用，已自动降级为无缓存模式直接执行")
+		db = nil
 	}
 
 	mctx := &musicianContext{
@@ -266,15 +272,15 @@ func (c *Musician) execute(ctx context.Context) error {
 		return fmt.Errorf("配置文件中缺少 accounts 账号节点")
 	}
 
-	var hasExecuted bool
-
-	// 1. 主账号执行音乐人任务
+	var activeAccounts []struct {
+		Filepath string
+		IsMain   bool
+	}
 	if cfg.Musician != nil && cfg.Musician.EnableMain && cfg.Accounts.Main != "" {
-		c.cmd.Printf("[musician] >>>>>> 开始主账号音乐人任务 (%s) <<<<<<\n", cfg.Accounts.Main)
-		if err := c.runMusicianForCookie(ctx, cfg.Accounts.Main, true); err != nil {
-			c.cmd.Printf("[musician] ❌ 主账号任务失败: %s\n", err)
-		}
-		hasExecuted = true
+		activeAccounts = append(activeAccounts, struct {
+			Filepath string
+			IsMain   bool
+		}{cfg.Accounts.Main, true})
 	} else {
 		if cfg.Musician != nil && !cfg.Musician.EnableMain {
 			c.cmd.Println("[musician] 提示: 主账号音乐人任务已在配置文件中关闭 (enableMain = false)")
@@ -283,14 +289,14 @@ func (c *Musician) execute(ctx context.Context) error {
 		}
 	}
 
-	// 2. 辅助账号执行音乐人任务
 	if cfg.Musician != nil && cfg.Musician.EnableSecondaries && len(cfg.Accounts.Secondary) > 0 {
 		for _, secCookie := range cfg.Accounts.Secondary {
-			c.cmd.Printf("[musician] >>>>>> 开始辅助账号音乐人任务 (%s) <<<<<<\n", secCookie)
-			if err := c.runMusicianForCookie(ctx, secCookie, false); err != nil {
-				c.cmd.Printf("[musician] ❌ 辅助账号任务失败: %s\n", err)
+			if secCookie != "" {
+				activeAccounts = append(activeAccounts, struct {
+					Filepath string
+					IsMain   bool
+				}{secCookie, false})
 			}
-			hasExecuted = true
 		}
 	} else {
 		if cfg.Musician != nil && !cfg.Musician.EnableSecondaries {
@@ -300,12 +306,40 @@ func (c *Musician) execute(ctx context.Context) error {
 		}
 	}
 
-	if !hasExecuted {
+	if len(activeAccounts) == 0 {
 		c.cmd.Println("[musician] 未启用或未配置任何账号进行音乐人任务，请检查 config.yaml")
-	} else {
-		c.cmd.Println("[musician] 所有音乐人日常与 VIP 任务执行完毕！")
+		return nil
 	}
+
+	for i, acc := range activeAccounts {
+		if acc.IsMain {
+			c.cmd.Printf("[musician] >>>>>> 开始主账号音乐人任务 (%s) <<<<<<\n", acc.Filepath)
+			if err := c.runMusicianForCookie(ctx, acc.Filepath, true); err != nil {
+				c.cmd.Printf("[musician] ❌ 主账号任务失败: %s\n", err)
+			}
+		} else {
+			c.cmd.Printf("[musician] >>>>>> 开始辅助账号音乐人任务 (%s) <<<<<<\n", acc.Filepath)
+			if err := c.runMusicianForCookie(ctx, acc.Filepath, false); err != nil {
+				c.cmd.Printf("[musician] ❌ 辅助账号任务失败: %s\n", err)
+			}
+		}
+
+		if i < len(activeAccounts)-1 {
+			c.sleepBetweenAccounts(ctx, acc.Filepath)
+		}
+	}
+
+	c.cmd.Println("[musician] 所有音乐人日常与 VIP 任务执行完毕！")
 	return nil
+}
+
+func (c *Musician) sleepBetweenAccounts(ctx context.Context, currentAccount string) {
+	sleepSec := 5 + c.rng.Intn(16) // 5 ~ 20 秒
+	c.cmd.Printf("[musician] ⏳ 账号 (%s) 任务处理完毕，为规避风控，随机等待 %d 秒后继续下一个账号...\n", currentAccount, sleepSec)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Duration(sleepSec) * time.Second):
+	}
 }
 
 // runMusicianForCookie 执行单个账号的完整音乐人任务（sign + vip），单次 API 调用
