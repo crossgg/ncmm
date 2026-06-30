@@ -5,6 +5,7 @@ on:
     # branches:
     #   - main
     tags:
+      - 'ncmm_v*'
       - 'v*'
   workflow_dispatch:
     inputs:
@@ -50,7 +51,7 @@ jobs:
           if [ "$INPUT_VERSION" = "auto" ] || [ -z "$INPUT_VERSION" ]; then
             CURRENT_COMMIT_TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")
             if [ -n "$CURRENT_COMMIT_TAG" ]; then
-              VERSION=$(echo "$CURRENT_COMMIT_TAG" | sed 's/^v//' | tr -d '[:space:]')
+              VERSION=$(echo "$CURRENT_COMMIT_TAG" | sed 's/^ncmm_v//;s/^v//' | tr -d '[:space:]')
             elif [ -f VERSION ]; then
               VERSION=$(cat VERSION | tr -d '[:space:]')
             else
